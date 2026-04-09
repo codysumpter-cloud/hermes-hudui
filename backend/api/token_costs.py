@@ -1,10 +1,12 @@
-"""Token cost endpoint — calculates estimated USD costs from token counts."""
+"""Token cost endpoint — calculates estimated USD costs per model."""
 
+import sqlite3
 from datetime import datetime
+from pathlib import Path
+
 from fastapi import APIRouter
 
-from hermes_hud.collectors.sessions import collect_sessions
-from hermes_hud.collectors.config import collect_config
+from hermes_hud.collectors.utils import default_hermes_dir
 
 router = APIRouter()
 
@@ -78,151 +80,176 @@ MODEL_PRICING: dict[str, dict] = {
         "cache_read": 0.31, "cache_write": 4.50,
         "reasoning": 1.25,
     },
+    # Local / free — zero cost
+    "local": {
+        "input": 0.0, "output": 0.0,
+        "cache_read": 0.0, "cache_write": 0.0,
+        "reasoning": 0.0,
+    },
 }
 
-# Default pricing for unknown models (Claude Opus rates)
 DEFAULT_PRICING = MODEL_PRICING["claude-opus-4-6"]
 
 
-def _get_pricing(model: str | None) -> dict:
+def _get_pricing(model: str | None) -> tuple[dict, str]:
+    """Return (pricing_dict, matched_key) for a model."""
     if not model:
-        return DEFAULT_PRICING
-    # Try exact match first
+        return DEFAULT_PRICING, "default (claude-opus-4-6)"
+    # Exact match
     if model in MODEL_PRICING:
-        return MODEL_PRICING[model]
-    # Try partial match (e.g. "claude-opus-4-6-20250514")
+        return MODEL_PRICING[model], model
+    # Partial match (strip provider prefix)
+    base = model.split("/")[-1] if "/" in model else model
     for key, pricing in MODEL_PRICING.items():
-        if model.startswith(key):
-            return pricing
-    return DEFAULT_PRICING
+        if base.startswith(key):
+            return pricing, key
+    # Check if it's a local/inference model (zero cost)
+    lower = model.lower()
+    if any(kw in lower for kw in ("local", "localhost", "free", "9b", "7b", "13b", "4b", "3b")):
+        return MODEL_PRICING["local"], "local (free)"
+    return DEFAULT_PRICING, f"default ({model})"
 
 
-def _calc_session_cost(session: dict, pricing: dict) -> dict:
-    """Calculate cost breakdown for a single session."""
-    in_tok = session.get("input_tokens", 0)
-    out_tok = session.get("output_tokens", 0)
-    cache_r = session.get("cache_read_tokens", 0)
-    cache_w = session.get("cache_write_tokens", 0)
-    reasoning = session.get("reasoning_tokens", 0)
-
-    in_cost = (in_tok / 1_000_000) * pricing["input"]
-    out_cost = (out_tok / 1_000_000) * pricing["output"]
-    cache_r_cost = (cache_r / 1_000_000) * pricing["cache_read"]
-    cache_w_cost = (cache_w / 1_000_000) * pricing["cache_write"]
-    reasoning_cost = (reasoning / 1_000_000) * pricing["reasoning"]
-
-    total = in_cost + out_cost + cache_r_cost + cache_w_cost + reasoning_cost
-
-    return {
-        "input_cost": round(in_cost, 4),
-        "output_cost": round(out_cost, 4),
-        "cache_read_cost": round(cache_r_cost, 4),
-        "cache_write_cost": round(cache_w_cost, 4),
-        "reasoning_cost": round(reasoning_cost, 4),
-        "total_cost": round(total, 4),
-        "input_tokens": in_tok,
-        "output_tokens": out_tok,
-        "cache_read_tokens": cache_r,
-        "cache_write_tokens": cache_w,
-        "reasoning_tokens": reasoning,
-    }
+def _calc_cost(tokens: dict, pricing: dict) -> float:
+    return sum(
+        (tokens.get(k, 0) / 1_000_000) * pricing.get(k, 0)
+        for k in ("input", "output", "cache_read", "cache_write", "reasoning")
+    )
 
 
 @router.get("/token-costs")
 async def get_token_costs():
-    """Token usage and estimated costs."""
-    sessions_state = collect_sessions()
-    config = collect_config()
-    pricing = _get_pricing(config.model)
+    """Token usage and estimated costs, broken down by model."""
+    hermes_dir = default_hermes_dir()
+    db_path = str(Path(hermes_dir) / "state.db")
+
+    if not Path(db_path).exists():
+        return {"error": "state.db not found"}
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
     today = datetime.now().strftime("%Y-%m-%d")
 
+    # Query all sessions with model column
+    cur.execute("""
+        SELECT id, source, started_at, model,
+               message_count, tool_call_count,
+               input_tokens, output_tokens,
+               cache_read_tokens, cache_write_tokens,
+               reasoning_tokens
+        FROM sessions
+        ORDER BY started_at ASC
+    """)
+
+    # Per-model aggregation
+    by_model: dict[str, dict] = {}
+
+    # Today aggregation
+    today_data = {
+        "session_count": 0, "message_count": 0,
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read_tokens": 0, "cache_write_tokens": 0,
+        "reasoning_tokens": 0, "cost": 0.0,
+    }
+
     # All-time totals
-    all_input = 0
-    all_output = 0
-    all_cache_r = 0
-    all_cache_w = 0
-    all_reasoning = 0
+    all_input = all_output = all_cache_r = all_cache_w = all_reasoning = 0
+    all_messages = all_tool_calls = 0
     all_cost = 0.0
-    all_messages = 0
-    all_tool_calls = 0
+    total_sessions = 0
 
-    # Today's totals
-    today_input = 0
-    today_output = 0
-    today_cache_r = 0
-    today_cache_w = 0
-    today_reasoning = 0
-    today_cost = 0.0
-    today_messages = 0
-    today_session_count = 0
+    # Daily trend
+    daily: dict[str, dict] = {}
 
-    # Daily cost trend (last 30 days)
-    daily_costs: dict[str, float] = {}
-    daily_tokens: dict[str, int] = {}
-    daily_sessions: dict[str, int] = {}
+    for row in cur.fetchall():
+        model = row["model"] or "unknown"
+        started_ts = row["started_at"]
+        started = datetime.fromtimestamp(started_ts) if started_ts else None
+        day = started.strftime("%Y-%m-%d") if started else "unknown"
+        is_today = day == today
 
-    for sess in sessions_state.sessions:
-        is_today = sess.started_at.strftime("%Y-%m-%d") == today
-        day = sess.started_at.strftime("%Y-%m-%d")
+        tokens = {
+            "input": row["input_tokens"] or 0,
+            "output": row["output_tokens"] or 0,
+            "cache_read": row["cache_read_tokens"] or 0,
+            "cache_write": row["cache_write_tokens"] or 0,
+            "reasoning": row["reasoning_tokens"] or 0,
+        }
 
-        in_tok = sess.input_tokens
-        out_tok = sess.output_tokens
-        cache_r = sess.cache_read_tokens
-        cache_w = sess.cache_write_tokens
-        reasoning = sess.reasoning_tokens
+        pricing, matched = _get_pricing(model)
+        cost = _calc_cost(tokens, pricing)
 
-        session_cost = (
-            (in_tok / 1_000_000) * pricing["input"]
-            + (out_tok / 1_000_000) * pricing["output"]
-            + (cache_r / 1_000_000) * pricing["cache_read"]
-            + (cache_w / 1_000_000) * pricing["cache_write"]
-            + (reasoning / 1_000_000) * pricing["reasoning"]
-        )
+        # Per-model
+        if model not in by_model:
+            by_model[model] = {
+                "model": model, "matched_pricing": matched,
+                "session_count": 0, "message_count": 0,
+                "input_tokens": 0, "output_tokens": 0,
+                "cache_read_tokens": 0, "cache_write_tokens": 0,
+                "reasoning_tokens": 0, "cost": 0.0,
+            }
+        m = by_model[model]
+        m["session_count"] += 1
+        m["message_count"] += row["message_count"] or 0
+        m["input_tokens"] += tokens["input"]
+        m["output_tokens"] += tokens["output"]
+        m["cache_read_tokens"] += tokens["cache_read"]
+        m["cache_write_tokens"] += tokens["cache_write"]
+        m["reasoning_tokens"] += tokens["reasoning"]
+        m["cost"] += cost
 
-        all_input += in_tok
-        all_output += out_tok
-        all_cache_r += cache_r
-        all_cache_w += cache_w
-        all_reasoning += reasoning
-        all_cost += session_cost
-        all_messages += sess.message_count
-        all_tool_calls += sess.tool_call_count
-
+        # Today
         if is_today:
-            today_input += in_tok
-            today_output += out_tok
-            today_cache_r += cache_r
-            today_cache_w += cache_w
-            today_reasoning += reasoning
-            today_cost += session_cost
-            today_messages += sess.message_count
-            today_session_count += 1
+            today_data["session_count"] += 1
+            today_data["message_count"] += row["message_count"] or 0
+            today_data["input_tokens"] += tokens["input"]
+            today_data["output_tokens"] += tokens["output"]
+            today_data["cache_read_tokens"] += tokens["cache_read"]
+            today_data["cache_write_tokens"] += tokens["cache_write"]
+            today_data["reasoning_tokens"] += tokens["reasoning"]
+            today_data["cost"] += cost
 
-        daily_costs[day] = daily_costs.get(day, 0) + session_cost
-        daily_tokens[day] = daily_tokens.get(day, 0) + in_tok + out_tok
-        daily_sessions[day] = daily_sessions.get(day, 0) + 1
+        # All-time
+        total_sessions += 1
+        all_messages += row["message_count"] or 0
+        all_tool_calls += row["tool_call_count"] or 0
+        all_input += tokens["input"]
+        all_output += tokens["output"]
+        all_cache_r += tokens["cache_read"]
+        all_cache_w += tokens["cache_write"]
+        all_reasoning += tokens["reasoning"]
+        all_cost += cost
 
-    # Sort daily trend
-    sorted_days = sorted(daily_costs.keys())
+        # Daily
+        if day not in daily:
+            daily[day] = {"cost": 0.0, "tokens": 0, "sessions": 0}
+        daily[day]["cost"] += cost
+        daily[day]["tokens"] += tokens["input"] + tokens["output"]
+        daily[day]["sessions"] += 1
+
+    conn.close()
+
+    # Sort models by cost descending
+    model_list = sorted(by_model.values(), key=lambda m: -m["cost"])
+
+    # Round costs
+    for m in model_list:
+        m["cost"] = round(m["cost"], 2)
+    today_data["cost"] = round(today_data["cost"], 2)
+
+    sorted_days = sorted(daily.keys())
 
     return {
-        "model": config.model,
-        "provider": config.provider,
-        "pricing": pricing,
         "today": {
             "date": today,
-            "session_count": today_session_count,
-            "message_count": today_messages,
-            "input_tokens": today_input,
-            "output_tokens": today_output,
-            "cache_read_tokens": today_cache_r,
-            "cache_write_tokens": today_cache_w,
-            "reasoning_tokens": today_reasoning,
-            "total_tokens": today_input + today_output,
-            "estimated_cost_usd": round(today_cost, 2),
+            **today_data,
+            "total_tokens": today_data["input_tokens"] + today_data["output_tokens"],
+            "estimated_cost_usd": today_data["cost"],
         },
         "all_time": {
-            "session_count": sessions_state.total_sessions,
+            "session_count": total_sessions,
             "message_count": all_messages,
             "tool_call_count": all_tool_calls,
             "input_tokens": all_input,
@@ -233,20 +260,15 @@ async def get_token_costs():
             "total_tokens": all_input + all_output,
             "estimated_cost_usd": round(all_cost, 2),
         },
-        "cost_breakdown": {
-            "input": round((all_input / 1_000_000) * pricing["input"], 2),
-            "output": round((all_output / 1_000_000) * pricing["output"], 2),
-            "cache_read": round((all_cache_r / 1_000_000) * pricing["cache_read"], 2),
-            "cache_write": round((all_cache_w / 1_000_000) * pricing["cache_write"], 2),
-            "reasoning": round((all_reasoning / 1_000_000) * pricing["reasoning"], 2),
-        },
+        "by_model": model_list,
         "daily_trend": [
             {
                 "date": day,
-                "cost": round(daily_costs[day], 2),
-                "tokens": daily_tokens[day],
-                "sessions": daily_sessions[day],
+                "cost": round(daily[day]["cost"], 2),
+                "tokens": daily[day]["tokens"],
+                "sessions": daily[day]["sessions"],
             }
             for day in sorted_days
         ],
+        "pricing_table": {k: {kk: vv for kk, vv in v.items()} for k, v in MODEL_PRICING.items()},
     }
