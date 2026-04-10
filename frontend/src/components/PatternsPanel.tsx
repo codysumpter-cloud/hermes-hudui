@@ -29,7 +29,8 @@ function HourlyHeatmap({ data }: { data: any[] }) {
 export default function PatternsPanel() {
   const { data, isLoading } = useApi('/patterns', 60000)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Patterns" className="col-span-full"><div className="glow text-[13px] animate-pulse">Loading...</div></Panel>
   }
 

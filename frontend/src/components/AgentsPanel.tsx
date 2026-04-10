@@ -11,7 +11,8 @@ const SOURCE_STYLES: Record<string, { color: string; label: string }> = {
 export default function AgentsPanel() {
   const { data, isLoading } = useApi('/agents', 15000)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Agents" className="col-span-full"><div className="glow text-[13px] animate-pulse">Scanning processes...</div></Panel>
   }
 

@@ -5,7 +5,8 @@ import { timeAgo } from '../lib/utils'
 export default function CronPanel() {
   const { data, isLoading } = useApi('/cron', 30000)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Cron Jobs" className="col-span-full"><div className="glow text-[13px] animate-pulse">Loading...</div></Panel>
   }
 

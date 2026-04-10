@@ -24,7 +24,8 @@ function MemoryEntries({ entries }: { entries: any[] }) {
 export default function MemoryPanel() {
   const { data, isLoading } = useApi('/memory', 30000)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Memory" className="col-span-full"><div className="glow text-[13px] animate-pulse">Loading...</div></Panel>
   }
 

@@ -62,7 +62,8 @@ function ModelCard({ m }: { m: any }) {
 export default function TokenCostsPanel() {
   const { data, isLoading } = useApi('/token-costs', 60000)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Token Costs" className="col-span-full"><div className="glow text-[13px] animate-pulse">Calculating costs...</div></Panel>
   }
 

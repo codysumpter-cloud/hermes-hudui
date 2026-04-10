@@ -4,7 +4,8 @@ import Panel from './Panel'
 export default function HealthPanel() {
   const { data, isLoading } = useApi('/health', 30000)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Health" className="col-span-full"><div className="glow text-[13px] animate-pulse">Loading...</div></Panel>
   }
 

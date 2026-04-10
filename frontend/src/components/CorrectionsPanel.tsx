@@ -10,7 +10,8 @@ const SEVERITY: Record<string, { color: string; icon: string }> = {
 export default function CorrectionsPanel() {
   const { data, isLoading } = useApi('/corrections', 60000)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Corrections" className="col-span-full"><div className="glow text-[13px] animate-pulse">Loading...</div></Panel>
   }
 

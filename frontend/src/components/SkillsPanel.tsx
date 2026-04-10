@@ -40,7 +40,8 @@ export default function SkillsPanel() {
   const { data, isLoading } = useApi('/skills', 60000)
   const [selectedCat, setSelectedCat] = useState<string | null>(null)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Skills" className="col-span-full"><div className="glow text-[13px] animate-pulse">Scanning skill library...</div></Panel>
   }
 

@@ -62,23 +62,31 @@ export function useWebSocket(): UseWebSocketReturn {
             snapshots: '/snapshots',
           }
 
-          // Invalidate all matching SWR keys
+          // Silently revalidate matching SWR keys (keep stale data, update in background)
           data.data_types.forEach((dataType) => {
             const path = typeToPath[dataType]
             if (path) {
               mutate(
                 (key) => typeof key === 'string' && key.startsWith(`/api${path}`),
                 undefined,
-                { revalidate: true }
+                { 
+                  revalidate: true,
+                  rollbackOnError: true,
+                  populateCache: true,
+                }
               )
             }
           })
 
-          // Also invalidate dashboard
+          // Also revalidate dashboard silently
           mutate(
             (key) => typeof key === 'string' && key.startsWith('/api/dashboard'),
             undefined,
-            { revalidate: true }
+            { 
+              revalidate: true,
+              rollbackOnError: true,
+              populateCache: true,
+            }
           )
         }
       } catch (err) {

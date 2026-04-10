@@ -180,7 +180,8 @@ function ProfileCard({ p }: { p: any }) {
 export default function ProfilesPanel() {
   const { data, isLoading } = useApi('/profiles', 30000)
 
-  if (isLoading || !data) {
+  // Only show loading on initial load
+  if (isLoading && !data) {
     return <Panel title="Profiles" className="col-span-full"><div className="glow text-[13px] animate-pulse">Loading...</div></Panel>
   }
 

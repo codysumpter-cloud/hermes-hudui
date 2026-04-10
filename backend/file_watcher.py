@@ -95,6 +95,7 @@ class FileWatcherService:
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._on_change: Callable[[list[str], Path], None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def on_change(self, callback: Callable[[list[str], Path], None]) -> None:
         """Set callback for change events.
@@ -143,14 +144,34 @@ class FileWatcherService:
 
         return paths
 
-    async def _watch_loop(self) -> None:
-        """Main watch loop running in background."""
+    def _run_sync_watcher(self) -> None:
+        """Synchronous watcher to run in background thread."""
+        import threading
+        import time
+
+        # Track last broadcast time per data type (throttle: max 1 broadcast per 5 seconds per type)
+        last_broadcast: dict[str, float] = {}
+        MIN_BROADCAST_INTERVAL = 5.0  # seconds
+
+        def should_broadcast(data_types: set[str]) -> bool:
+            now = time.time()
+            for dt in data_types:
+                last = last_broadcast.get(dt, 0)
+                if now - last >= MIN_BROADCAST_INTERVAL:
+                    return True
+            return False
+
+        def update_last_broadcast(data_types: set[str]) -> None:
+            now = time.time()
+            for dt in data_types:
+                last_broadcast[dt] = now
+
         try:
-            # Use watchfiles with force_polling=False for native OS events
             watch_paths = [str(p) for p in self._get_watch_paths()]
 
+            # Use polling for reliability (scan every 2 seconds)
             for changes in watch(
-                *watch_paths, stop_event=self._stop_event, force_polling=False
+                *watch_paths, stop_event=self._stop_event, force_polling=True
             ):
                 if self._stop_event.is_set():
                     break
@@ -165,42 +186,68 @@ class FileWatcherService:
                     if _should_ignore(path):
                         continue
 
-                    # Detect what data changed
                     data_types = _detect_change_type(path)
                     data_types_changed.update(data_types)
                     changed_files.append(path)
-
                     logger.debug(f"Detected {change_type.name}: {path} -> {data_types}")
 
-                if data_types_changed:
-                    # Clear relevant cache entries
-                    cache_keys_to_clear = list(data_types_changed)
-                    clear_cache()  # Simple: clear all cache
+                # Only broadcast if enough time has passed (throttle)
+                if data_types_changed and should_broadcast(data_types_changed):
+                    update_last_broadcast(data_types_changed)
+                    # Schedule broadcast in main event loop
+                    if self._loop and self._loop.is_running():
+                        asyncio.run_coroutine_threadsafe(
+                            self._handle_changes(data_types_changed, changed_files),
+                            self._loop,
+                        )
 
-                    # Broadcast to WebSocket clients
-                    await ws_manager.broadcast(
-                        {
-                            "type": "data_changed",
-                            "data_types": list(data_types_changed),
-                            "paths": [str(p) for p in changed_files[:5]],  # Limit paths
-                        }
+        except Exception:
+            logger.exception("File watcher error")
+
+    async def _handle_changes(
+        self, data_types_changed: set[str], changed_files: list[Path]
+    ) -> None:
+        """Handle detected changes (runs in main async loop)."""
+        try:
+            # Clear cache
+            clear_cache()
+
+            # Broadcast to WebSocket clients
+            await ws_manager.broadcast(
+                {
+                    "type": "data_changed",
+                    "data_types": list(data_types_changed),
+                    "paths": [str(p) for p in changed_files[:5]],
+                }
+            )
+
+            # Call custom handler if set
+            if self._on_change:
+                for dt in data_types_changed:
+                    self._on_change(
+                        [dt], changed_files[0] if changed_files else Path(".")
                     )
+        except Exception:
+            logger.exception("Error handling file changes")
 
-                    # Call custom handler if set
-                    if self._on_change:
-                        try:
-                            for dt in data_types_changed:
-                                self._on_change(
-                                    [dt], changed_files[0] if changed_files else path
-                                )
-                        except Exception:
-                            logger.exception("Error in change callback")
+    async def _watch_loop(self) -> None:
+        """Main watch loop - runs sync watcher in thread."""
+        import threading
+
+        self._loop = asyncio.get_event_loop()
+
+        try:
+            # Run blocking watch in background thread
+            thread = threading.Thread(target=self._run_sync_watcher, daemon=True)
+            thread.start()
+
+            # Wait until stopped
+            while not self._stop_event.is_set():
+                await asyncio.sleep(0.1)
 
         except asyncio.CancelledError:
             logger.debug("Watch loop cancelled")
             raise
-        except Exception:
-            logger.exception("File watcher error")
 
     def is_running(self) -> bool:
         """Check if watcher is running."""
