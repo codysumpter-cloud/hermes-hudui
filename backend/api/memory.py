@@ -6,6 +6,7 @@ import fcntl
 import os
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -19,8 +20,10 @@ router = APIRouter()
 
 ENTRY_DELIMITER = "\n§\n"
 
+MemoryTarget = Literal["memory", "user"]
 
-def _memory_path(target: str) -> Path:
+
+def _memory_path(target: MemoryTarget) -> Path:
     """Return the path for MEMORY.md or USER.md."""
     memories_dir = Path(default_hermes_dir()) / "memories"
     if target == "user":
@@ -28,22 +31,23 @@ def _memory_path(target: str) -> Path:
     return memories_dir / "MEMORY.md"
 
 
-def _lock_path(target: str) -> Path:
+def _lock_path(target: MemoryTarget) -> Path:
     return _memory_path(target).with_suffix(".md.lock")
 
 
-def _read_entries(target: str) -> list[str]:
+def _read_entries(target: MemoryTarget) -> list[str]:
     """Read and split entries from a memory file."""
     path = _memory_path(target)
-    if not path.exists():
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
         return []
-    content = path.read_text(encoding="utf-8").strip()
     if not content:
         return []
     return [p.strip() for p in content.split("§") if p.strip()]
 
 
-def _write_entries(target: str, entries: list[str]) -> None:
+def _write_entries(target: MemoryTarget, entries: list[str]) -> None:
     """Atomically write entries back to a memory file."""
     path = _memory_path(target)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,28 +56,24 @@ def _write_entries(target: str, entries: list[str]) -> None:
     try:
         os.write(fd, content.encode("utf-8"))
         os.close(fd)
+        fd = -1
         os.replace(tmp, str(path))
     except Exception:
-        os.close(fd) if not os.get_inheritable(fd) else None
+        if fd >= 0:
+            os.close(fd)
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
 
 
-def _with_lock(target: str, fn):
+def _with_lock(target: MemoryTarget, fn):
     """Execute fn while holding the memory file lock."""
     lock = _lock_path(target)
     lock.parent.mkdir(parents=True, exist_ok=True)
     lock.touch(exist_ok=True)
     with open(lock, "r") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
-        try:
-            return fn()
-        finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
-
-
-# ── Read ──────────────────────────────────────────────────────────────────────
+        return fn()
 
 
 @router.get("/memory")
@@ -90,37 +90,31 @@ async def get_memory():
     }
 
 
-# ── Write ─────────────────────────────────────────────────────────────────────
-
-
 class AddBody(BaseModel):
-    target: str  # "memory" or "user"
+    target: MemoryTarget
     content: str
 
 
 class EditBody(BaseModel):
-    target: str
+    target: MemoryTarget
     old_text: str
     content: str
 
 
 class DeleteBody(BaseModel):
-    target: str
+    target: MemoryTarget
     old_text: str
 
 
 @router.post("/memory")
-async def add_entry(body: AddBody):
+def add_entry(body: AddBody):
     """Add a new memory entry."""
-    if body.target not in ("memory", "user"):
-        raise HTTPException(400, "target must be 'memory' or 'user'")
     content = body.content.strip()
     if not content:
         raise HTTPException(400, "content cannot be empty")
 
     def do():
         entries = _read_entries(body.target)
-        # Duplicate check
         for e in entries:
             if e == content:
                 raise HTTPException(409, "Duplicate entry")
@@ -132,10 +126,8 @@ async def add_entry(body: AddBody):
 
 
 @router.put("/memory")
-async def edit_entry(body: EditBody):
+def edit_entry(body: EditBody):
     """Replace a memory entry (matched by old_text substring)."""
-    if body.target not in ("memory", "user"):
-        raise HTTPException(400, "target must be 'memory' or 'user'")
     new_content = body.content.strip()
     if not new_content:
         raise HTTPException(400, "content cannot be empty")
@@ -155,10 +147,8 @@ async def edit_entry(body: EditBody):
 
 
 @router.delete("/memory")
-async def delete_entry(body: DeleteBody):
+def delete_entry(body: DeleteBody):
     """Remove a memory entry (matched by old_text substring)."""
-    if body.target not in ("memory", "user"):
-        raise HTTPException(400, "target must be 'memory' or 'user'")
 
     def do():
         entries = _read_entries(body.target)

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useApi } from '../hooks/useApi'
 import Panel, { CapacityBar } from './Panel'
 
@@ -26,6 +26,7 @@ function MemoryEntry({
 }) {
   const [editing, setEditing] = useState(false)
   const [editText, setEditText] = useState('')
+  const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -60,6 +61,10 @@ function MemoryEntry({
   }
 
   const deleteEntry = async () => {
+    if (!confirming) {
+      setConfirming(true)
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -69,6 +74,7 @@ function MemoryEntry({
       setError(e.message)
     } finally {
       setBusy(false)
+      setConfirming(false)
     }
   }
 
@@ -94,11 +100,12 @@ function MemoryEntry({
               </button>
               <button
                 onClick={deleteEntry}
+                onMouseLeave={() => setConfirming(false)}
                 className="text-[11px] cursor-pointer px-1"
                 style={{ color: 'var(--hud-error, #f44)' }}
                 disabled={busy}
               >
-                del
+                {confirming ? 'confirm?' : 'del'}
               </button>
             </span>
           )}
@@ -224,8 +231,8 @@ function MemoryEntries({ entries, target, onMutate }: { entries: any[]; target: 
 
   return (
     <div className="space-y-1.5">
-      {entries.map((e: any, i: number) => (
-        <MemoryEntry key={i} entry={e} target={target} onMutate={onMutate} />
+      {entries.map((e: any) => (
+        <MemoryEntry key={e.text} entry={e} target={target} onMutate={onMutate} />
       ))}
     </div>
   )
@@ -233,10 +240,6 @@ function MemoryEntries({ entries, target, onMutate }: { entries: any[]; target: 
 
 export default function MemoryPanel() {
   const { data, isLoading, mutate } = useApi('/memory', 30000)
-
-  const handleMutate = useCallback(() => {
-    mutate()
-  }, [mutate])
 
   if (isLoading && !data) {
     return <Panel title="Memory" className="col-span-full"><div className="glow text-[13px] animate-pulse">Loading...</div></Panel>
@@ -251,8 +254,8 @@ export default function MemoryPanel() {
         <div className="text-[13px] my-2" style={{ color: 'var(--hud-text-dim)' }}>
           {memory?.entry_count || 0} entries · {Object.entries(memory?.count_by_category || {}).map(([k,v]) => `${k}(${v})`).join(' ')}
         </div>
-        <MemoryEntries entries={memory?.entries || []} target="memory" onMutate={handleMutate} />
-        <AddEntryForm target="memory" onMutate={handleMutate} />
+        <MemoryEntries entries={memory?.entries || []} target="memory" onMutate={mutate} />
+        <AddEntryForm target="memory" onMutate={mutate} />
       </Panel>
 
       <Panel title="User Profile" className="col-span-1">
@@ -260,8 +263,8 @@ export default function MemoryPanel() {
         <div className="text-[13px] my-2" style={{ color: 'var(--hud-text-dim)' }}>
           {user?.entry_count || 0} entries
         </div>
-        <MemoryEntries entries={user?.entries || []} target="user" onMutate={handleMutate} />
-        <AddEntryForm target="user" onMutate={handleMutate} />
+        <MemoryEntries entries={user?.entries || []} target="user" onMutate={mutate} />
+        <AddEntryForm target="user" onMutate={mutate} />
       </Panel>
     </>
   )
