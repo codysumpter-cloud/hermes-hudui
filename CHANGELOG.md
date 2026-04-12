@@ -4,7 +4,9 @@ All notable changes to hermes-hudui are documented here.
 
 ## [Unreleased]
 
-Nothing yet — work in progress.
+### Added
+- **Session transcript viewer** — click any session in the Sessions tab to read the full conversation in a modal with markdown rendering and per-message token counts
+- **Session search** — search bar searches session titles and full message content (FTS), results show match type and a content snippet
 
 ---
 
