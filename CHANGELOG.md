@@ -4,8 +4,24 @@ All notable changes to hermes-hudui are documented here.
 
 ## [Unreleased]
 
+---
+
+## [0.5.0] — 2026-04-17
+
 ### Added
 - **Sudo tab** — surfaces sudo governance and command history from existing data. Shows approval mode, timeout, command allowlist, and security settings (from `config.yaml`); usage statistics broken down by approved/failed/blocked with a daily sparkline and subcommand type breakdown; scrollable command history extracted from `state.db` tool-output messages via FTS. Closes #14.
+- **Regenerate button** — re-run the last message in chat using the AI SDK's regenerate helper; button appears after each completed assistant response.
+- **Vercel AI SDK Data Stream Protocol** — replaced the custom SSE chat implementation with the AI SDK's data stream protocol for more robust streaming and future-proofing.
+
+### Fixed
+- **WebSocket / StaticFiles mount crash** — WebSocket upgrade scopes no longer fall through to the `StaticFiles` catch-all, preventing a startup crash on certain deployment configurations.
+- **Vite dev proxy for `/ws`** — WebSocket connections are now correctly proxied through the Vite dev server to the backend (`:3001`), so live-reload and HUD updates work in dev mode.
+- **macOS MallocStackLogging warning** — suppressed the noisy `MallocStackLogging` warning emitted on macOS when spawning subprocesses. Closes #15.
+- **zsh extras install hint** — `[tui]` and `[chat]` extras are now quoted in install instructions and error messages to prevent zsh glob expansion.
+- **ChatNotAvailableError message** — tightened to a single clear line.
+
+### Performance
+- **Chat streaming** — switched to `read1()` for chunked reads and tightened the frontend render throttle, reducing perceived latency on long responses.
 
 ---
 

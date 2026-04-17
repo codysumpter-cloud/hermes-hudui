@@ -22,7 +22,7 @@ export default function BootScreen({ onComplete }: BootScreenProps) {
   const [skipped, setSkipped] = useState(false)
 
   const BOOT_LINES = [
-    `☤ ${t('boot.version')} v0.4.0`,
+    `☤ ${t('boot.version')} v0.5.0`,
     '',
     `${t('boot.connecting')}`,
     'Reading ~/.hermes/state.db',
