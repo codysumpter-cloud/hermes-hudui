@@ -1,0 +1,43 @@
+name: Sync fork from upstream
+
+on:
+  schedule:
+    - cron: '17 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-fork-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync default branch from upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          payload=$(printf '{"branch":"%s"}' "$BRANCH")
+          status=$(curl -sS -o response.json -w "%{http_code}" \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${REPO}/merge-upstream" \
+            -d "$payload")
+          cat response.json
+          if [ "$status" = "200" ]; then
+            echo "Upstream sync complete."
+          elif [ "$status" = "409" ] || [ "$status" = "422" ]; then
+            echo "Upstream sync needs manual resolution (status $status)." >&2
+            exit 1
+          else
+            echo "Unexpected response: $status" >&2
+            exit 1
+          fi
