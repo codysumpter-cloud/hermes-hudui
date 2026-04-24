@@ -36,6 +36,7 @@ MODEL_PRICING: dict[str, dict] = {
     # OpenAI
     "gpt-5.4-pro": {"input": 30.00, "output": 180.00, "cache_read": 15.00, "cache_write": 30.00, "reasoning": 30.00},
     "gpt-5.4": {"input": 2.50, "output": 15.00, "cache_read": 1.25, "cache_write": 2.50, "reasoning": 2.50},
+    "gpt-5.5": _GPT52,
     "gpt-5.2-codex": _GPT52,
     "gpt-5.2": _GPT52,
     "gpt-4o": {"input": 2.50, "output": 10.00, "cache_read": 1.25, "cache_write": 2.50, "reasoning": 2.50},
