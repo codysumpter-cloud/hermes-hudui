@@ -6,6 +6,49 @@ All notable changes to hermes-hudui are documented here.
 
 ---
 
+## [0.7.0] — 2026-04-29
+
+### Added
+- **Cron job creation UI** — `POST /api/cron` endpoint plus a "Create Job" drawer in the Cron tab. Supports interval presets (30m / 1h / 2h / 24h / custom) or raw cron expressions with a live schedule preview, optional name, prompt, repeat count, delivery target (local / origin / telegram / discord / signal / custom `platform:chat_id`), and an Advanced section for skills, script, and absolute workdir. Validation is mirrored client- and server-side: schedule required, `repeat` must be a positive integer, `workdir` must be absolute, and custom interval values must be non-empty. The hermes CLI is invoked via argv (no shell). E2E coverage in `tests/e2e/cron-create.js`.
+- **Profile editing UI** — `GET /api/profiles/options`, `GET /api/profiles/{name}/edit`, and `PUT /api/profiles/{name}/edit` endpoints expose hermes profile config (model, providers, skills, soul, and runtime settings). The Profiles tab now includes an inline editor with atomic, lock-protected writes (`fcntl.flock` + `tempfile.mkstemp` + `os.replace`) matching the rest of the HUD's mutation pattern. E2E coverage in `tests/e2e/profile-edit.js`.
+
+### Fixed
+- **Delete-button busy state on the Cron tab** — busy key for `DELETE /api/cron/{id}` was previously `id:null`, so the spinner never matched `isBusy('delete')`. The action key now resolves to `'delete'` and the spinner renders correctly.
+
+### Notes
+- Both new mutation endpoints inherit the HUD's localhost-trusted threat model. If you expose hermes-hudui beyond loopback, treat `POST /api/cron` and `PUT /api/profiles/{name}/edit` as RCE-equivalent surfaces (they spawn `hermes` and write profile files respectively).
+
+---
+
+## [0.6.0] — 2026-04-24
+
+### Added
+- **Providers tab** — read-only view of connected OAuth and API-key providers from `~/.hermes/auth.json` (Nous, Anthropic, OpenAI Codex, OpenRouter, Z.AI, and any others hermes writes). Shows per-provider status (connected / expiring / expired / missing), masked token preview, expires/obtained relative time, scope, auth mode, and an ACTIVE badge for the currently selected provider.
+- **Gateway tab** — live gateway status pulled from `~/.hermes/gateway_state.json` (state, PID with liveness + zombie detection, active agents, per-platform connection state, exit reason) plus two action buttons wired end-to-end: "Restart gateway" shells out to `hermes gateway restart`, "Update hermes" to `hermes update`. Each action spawns detached via `subprocess.Popen`, tees output to `~/.hermes/logs/hud/<action>.log`, and the frontend polls `GET /api/actions/<name>/status` every second, streaming the log tail and final exit code.
+- **Model tab** — live capabilities for the current model, derived from `~/.hermes/models_dev_cache.json` + `config.yaml`. Capability badges (Tools / Vision / Reasoning / Structured Output), context window breakdown (auto from models.dev vs config override vs effective), max output tokens, per-1M-token pricing, release date, and knowledge cutoff.
+
+### Changed
+- **Sessions panel now shows model names again** — hermes v0.10+ moved the model ID from `model_config` JSON to a dedicated `model` column, so the collector now reads it directly (with a fallback to `model_config` for older DB rows).
+- **Chat tool calls and reasoning are captured again** — hermes v0.10+ prints `session_id` to stderr instead of stdout, so the chat engine now drains stderr concurrently via a background thread. Non-session-id stderr lines are surfaced as error output on non-zero exit.
+- **`collectors.utils.parse_timestamp`** now handles millisecond-epoch values and strips timezone info so naive-local datetimes compare cleanly against `datetime.now()`. Two collector-local duplicates of that logic have been removed.
+
+### Fixed
+- **gpt-5.5 pricing entry** — previously fell back to the $0/$0 "unpriced" default. Now maps to the Codex OAuth tier so session costs render non-zero. Follow-up: the models.dev entry lists $5/$30/1M for gpt-5.5; the HUD pricing table could be re-synced to models.dev as a later pass.
+
+### Notes
+- All three new tabs are read/observer-first — no session-token middleware yet. Action endpoints (`POST /api/gateway/restart`, `POST /api/hermes/update`) bind to `127.0.0.1` by default, matching the rest of the HUD's risk model.
+- Interactive OAuth flows (PKCE browser redirect, device-code polling) are out of scope for this release and planned for v0.7.
+
+---
+
+## [0.5.1] — 2026-04-24
+
+### Fixed
+- **High CPU from file watcher** — watchfiles polled every 300ms over the entire `~/.hermes/` tree, which pegged a core when `state.db` is large and actively written by a running agent. Bumped `poll_delay_ms` to 2000ms (aligned with the 5s broadcast throttle) and excluded `state.db` / `state.db-wal` / `state.db-shm` / `state.db-journal` via a dedicated filter. `force_polling=True` is retained so NFS / WSL1 / VM / Docker-bind-mount setups keep working. Thanks to @louie0609c for the root-cause analysis. Closes #22.
+- **Broken `install.sh` version print** — replaced the invalid `node -version` with `node --version` (thanks @CrayonL).
+
+---
+
 ## [0.5.0] — 2026-04-17
 
 ### Added

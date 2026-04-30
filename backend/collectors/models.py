@@ -377,3 +377,71 @@ class HUDState:
     config: ConfigState = field(default_factory=ConfigState)
     timeline: list[TimelineEvent] = field(default_factory=list)
     collected_at: datetime = field(default_factory=datetime.now)
+
+
+# ── Providers (OAuth status) ────────────────────────────────
+
+@dataclass
+class ProviderAuth:
+    id: str
+    name: str
+    status: str  # connected | expiring | expired | missing
+    token_preview: str = ""
+    expires_at: Optional[datetime] = None
+    obtained_at: Optional[datetime] = None
+    scope: str = ""
+    is_active: bool = False
+    auth_mode: str = ""
+
+
+@dataclass
+class ProvidersState:
+    providers: list[ProviderAuth] = field(default_factory=list)
+    active_provider: Optional[str] = None
+
+
+# ── Gateway status + actions ────────────────────────────────
+
+@dataclass
+class PlatformStatus:
+    name: str
+    state: str
+    updated_at: Optional[datetime] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+@dataclass
+class GatewayState:
+    state: str = "unknown"
+    pid: Optional[int] = None
+    pid_alive: bool = False
+    kind: str = ""
+    restart_requested: bool = False
+    exit_reason: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    active_agents: int = 0
+    platforms: list[PlatformStatus] = field(default_factory=list)
+
+
+# ── Model capabilities ──────────────────────────────────────
+
+@dataclass
+class ModelCapabilities:
+    model: str = ""
+    provider: str = ""
+    family: str = ""
+    supports_tools: bool = False
+    supports_vision: bool = False
+    supports_reasoning: bool = False
+    supports_structured_output: bool = False
+    max_output_tokens: int = 0
+    auto_context_length: int = 0       # from models.dev
+    config_context_length: int = 0     # user override from config.yaml
+    effective_context_length: int = 0  # max(config, auto)
+    cost_input_per_m: Optional[float] = None
+    cost_output_per_m: Optional[float] = None
+    cost_cache_read_per_m: Optional[float] = None
+    release_date: str = ""
+    knowledge_cutoff: str = ""
+    found: bool = False

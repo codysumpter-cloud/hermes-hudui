@@ -18,6 +18,9 @@ import TokenCostsPanel from './components/TokenCostsPanel'
 import CorrectionsPanel from './components/CorrectionsPanel'
 import PatternsPanel from './components/PatternsPanel'
 import SudoPanel from './components/SudoPanel'
+import ProvidersPanel from './components/ProvidersPanel'
+import GatewayPanel from './components/GatewayPanel'
+import ModelInfoPanel from './components/ModelInfoPanel'
 import { useI18n } from './i18n'
 
 function TabContent({ tab }: { tab: TabId }) {
@@ -36,6 +39,9 @@ function TabContent({ tab }: { tab: TabId }) {
     case 'corrections': return <CorrectionsPanel />
     case 'patterns': return <PatternsPanel />
     case 'sudo': return <SudoPanel />
+    case 'providers': return <ProvidersPanel />
+    case 'gateway': return <GatewayPanel />
+    case 'model-info': return <ModelInfoPanel />
     default: return <DashboardPanel />
   }
 }
@@ -56,6 +62,9 @@ const GRID_CLASS: Record<TabId, string> = {
   corrections: 'grid-cols-1',
   patterns: 'grid-cols-1 lg:grid-cols-2',
   sudo: 'grid-cols-1 lg:grid-cols-2',
+  providers: 'grid-cols-1',
+  gateway: 'grid-cols-1',
+  'model-info': 'grid-cols-1 lg:grid-cols-2',
 }
 
 export default function App() {
@@ -120,7 +129,7 @@ export default function App() {
       <div className="flex items-center justify-between px-3 py-0.5 text-[13px] border-t shrink-0"
            style={{ borderColor: 'var(--hud-border)', color: 'var(--hud-text-dim)', background: 'var(--hud-bg-surface)' }}>
         <span className="flex items-center gap-2">
-          ☤ {t('boot.version')} v0.5.0
+          ☤ {t('boot.version')} v0.7.0
           {/* WebSocket status indicator */}
           <span
             className="text-[10px] px-1.5 py-0.5 rounded"

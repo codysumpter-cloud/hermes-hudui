@@ -248,11 +248,28 @@ class ChatEngine:
                 # once real content has started (avoids waiting for \n).
                 started_content = False
                 in_warning_block = False
-                hermes_session_id = None
                 line_buf = b""
 
+                # hermes v0.10+ prints "session_id: <ID>" to stderr so stdout
+                # stays clean for piping. Drain stderr concurrently — pull the
+                # session_id line out and keep the rest for error reporting.
+                captured_session_id: list[str] = []
+                stderr_lines: list[str] = []
+
+                def _drain_stderr():
+                    for raw in process.stderr:
+                        text = raw.decode("utf-8", errors="replace").rstrip("\n")
+                        m = _SESSION_ID_RE.match(text.strip())
+                        if m:
+                            captured_session_id.append(m.group(1))
+                        elif text.strip():
+                            stderr_lines.append(text)
+
+                stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+                stderr_thread.start()
+
                 def _process_line(raw_line: bytes) -> None:
-                    nonlocal started_content, in_warning_block, hermes_session_id
+                    nonlocal started_content, in_warning_block
                     text = raw_line.decode("utf-8", errors="replace")
                     stripped = text.strip()
 
@@ -267,10 +284,6 @@ class ChatEngine:
                             return
                         in_warning_block = False
 
-                    m = _SESSION_ID_RE.match(stripped)
-                    if m:
-                        hermes_session_id = m.group(1)
-                        return
                     if _is_decoration_line(text):
                         return
 
@@ -309,18 +322,16 @@ class ChatEngine:
                     _process_line(line_buf)
 
                 process.wait()
+                stderr_thread.join(timeout=2)
+
+                hermes_session_id = captured_session_id[0] if captured_session_id else None
 
                 # Emit tool calls and reasoning from state.db
                 if hermes_session_id and not streamer._stopped.is_set():
                     _emit_tool_events(streamer, hermes_session_id)
 
-                # Check for errors
-                if process.returncode != 0:
-                    stderr = process.stderr.read().decode("utf-8", errors="replace")
-                    if stderr.strip():
-                        streamer.emit_error(f"CLI error: {stderr.strip()}")
-                    else:
-                        streamer.emit_done()
+                if process.returncode != 0 and stderr_lines:
+                    streamer.emit_error("CLI error: " + "\n".join(stderr_lines))
                 else:
                     streamer.emit_done()
 

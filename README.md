@@ -28,7 +28,7 @@ source venv/bin/activate && hermes-hudui
 
 ## What's Inside
 
-14 tabs covering everything your agent knows about itself — identity, memory, skills, sessions, cron jobs, projects, health, costs, patterns, corrections, sudo governance, and live chat.
+17 tabs covering everything your agent knows about itself — identity, memory, skills, sessions, cron jobs, projects, health, costs, patterns, corrections, sudo governance, live chat, connected OAuth providers, gateway control, and live model capabilities.
 
 Updates in real-time via WebSocket. No manual refresh needed.
 

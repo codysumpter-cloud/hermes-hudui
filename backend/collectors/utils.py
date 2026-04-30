@@ -65,20 +65,27 @@ def safe_get(row, key, default=None):
 
 
 def parse_timestamp(value) -> Optional[datetime]:
-    """Parse a timestamp from various formats (unix int/float, ISO string).
-
-    Returns None if parsing fails.
-    """
+    """Parse a timestamp (unix seconds, unix milliseconds, or ISO string)
+    into a naive local datetime. Returns None on failure."""
     if value is None:
         return None
     try:
         if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(value)
+            v = float(value)
+            if v > 1e12:  # milliseconds
+                v /= 1000.0
+            return datetime.fromtimestamp(v)
         if isinstance(value, str):
             try:
-                return datetime.fromtimestamp(float(value))
+                v = float(value)
+                if v > 1e12:
+                    v /= 1000.0
+                return datetime.fromtimestamp(v)
             except ValueError:
-                return datetime.fromisoformat(value)
+                dt = datetime.fromisoformat(value)
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone().replace(tzinfo=None)
+                return dt
     except (ValueError, TypeError, OSError):
         pass
     return None
