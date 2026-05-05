@@ -73,6 +73,13 @@ export const translations = {
     'gateway.update': 'Update hermes',
     'gateway.running': 'Running…',
     'gateway.exitCode': 'Exit code',
+    'gateway.managedTools': 'Managed Tools',
+    'gateway.nousAuth': 'Nous auth',
+    'gateway.present': 'present',
+    'gateway.missing': 'missing',
+    'gateway.managed': 'managed',
+    'gateway.direct': 'direct',
+    'gateway.unavailable': 'unavailable',
 
     // Model Info
     'modelInfo.title': 'Model',
@@ -554,6 +561,13 @@ export const translations = {
     'gateway.update': '更新 hermes',
     'gateway.running': '运行中…',
     'gateway.exitCode': '退出码',
+    'gateway.managedTools': '托管工具',
+    'gateway.nousAuth': 'Nous 认证',
+    'gateway.present': '存在',
+    'gateway.missing': '缺失',
+    'gateway.managed': '托管',
+    'gateway.direct': '直连',
+    'gateway.unavailable': '不可用',
 
     // Model Info
     'modelInfo.title': '模型',

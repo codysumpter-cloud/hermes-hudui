@@ -21,6 +21,23 @@ interface GatewayData {
     error_code: string | null
     error_message: string | null
   }[]
+  managed_tools: {
+    tools: {
+      key: string
+      label: string
+      gateway_service: string
+      enabled: boolean
+      available: boolean
+      route: 'managed' | 'direct' | 'unavailable'
+      direct_env_vars: string[]
+      configured_env_vars: string[]
+      reason: string
+    }[]
+    nous_auth_present: boolean
+    managed_count: number
+    direct_count: number
+    unavailable_count: number
+  }
 }
 
 interface ActionStatus {
@@ -36,6 +53,12 @@ interface ActionStatus {
 function platformColor(state: string): string {
   if (state === 'connected' || state === 'running') return 'var(--hud-success)'
   if (state === 'connecting' || state === 'starting') return 'var(--hud-warning, #d4a017)'
+  return 'var(--hud-error)'
+}
+
+function routeColor(route: string): string {
+  if (route === 'managed') return 'var(--hud-primary)'
+  if (route === 'direct') return 'var(--hud-success)'
   return 'var(--hud-error)'
 }
 
@@ -164,6 +187,7 @@ export default function GatewayPanel() {
   const healthy = data?.state === 'running' && data?.pid_alive
 
   return (
+    <>
     <Panel title={t('gateway.title')} className="col-span-full">
       <div className="grid sm:grid-cols-2 gap-4">
         <div>
@@ -233,5 +257,40 @@ export default function GatewayPanel() {
         </div>
       </div>
     </Panel>
+    <Panel title={t('gateway.managedTools')} className="col-span-full">
+      <div className="flex flex-wrap gap-2 mb-3 text-[12px]">
+        <span style={{ color: 'var(--hud-text-dim)' }}>{t('gateway.nousAuth')}: </span>
+        <span style={{ color: data?.managed_tools?.nous_auth_present ? 'var(--hud-success)' : 'var(--hud-error)' }}>
+          {data?.managed_tools?.nous_auth_present ? t('gateway.present') : t('gateway.missing')}
+        </span>
+        <span style={{ color: 'var(--hud-primary)' }}>{t('gateway.managed')}: {data?.managed_tools?.managed_count ?? 0}</span>
+        <span style={{ color: 'var(--hud-success)' }}>{t('gateway.direct')}: {data?.managed_tools?.direct_count ?? 0}</span>
+        <span style={{ color: 'var(--hud-error)' }}>{t('gateway.unavailable')}: {data?.managed_tools?.unavailable_count ?? 0}</span>
+      </div>
+      <div className="grid md:grid-cols-2 gap-2">
+        {(data?.managed_tools?.tools ?? []).map((tool) => (
+          <div key={tool.key} className="p-3 border" style={{ borderColor: 'var(--hud-border)' }}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="text-[14px] font-semibold" style={{ color: 'var(--hud-text)' }}>{tool.label}</div>
+                <div className="text-[12px]" style={{ color: 'var(--hud-text-dim)' }}>{tool.gateway_service}</div>
+              </div>
+              <span className="px-1.5 py-0.5 text-[11px] uppercase tracking-widest" style={{ color: routeColor(tool.route), border: `1px solid ${routeColor(tool.route)}` }}>
+                {tool.route}
+              </span>
+            </div>
+            <div className="mt-2 text-[12px]" style={{ color: tool.available ? 'var(--hud-text-dim)' : 'var(--hud-error)' }}>
+              {tool.reason}
+            </div>
+            {tool.configured_env_vars.length > 0 && (
+              <div className="mt-2 text-[11px] font-mono" style={{ color: 'var(--hud-success)' }}>
+                {tool.configured_env_vars.join(', ')}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Panel>
+    </>
   )
 }

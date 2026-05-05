@@ -463,6 +463,37 @@ class PlatformStatus:
 
 
 @dataclass
+class ManagedToolStatus:
+    key: str
+    label: str
+    gateway_service: str
+    enabled: bool = False
+    available: bool = False
+    route: str = "unavailable"  # managed | direct | unavailable
+    direct_env_vars: list[str] = field(default_factory=list)
+    configured_env_vars: list[str] = field(default_factory=list)
+    reason: str = ""
+
+
+@dataclass
+class ManagedToolsState:
+    tools: list[ManagedToolStatus] = field(default_factory=list)
+    nous_auth_present: bool = False
+
+    @property
+    def managed_count(self) -> int:
+        return sum(1 for t in self.tools if t.route == "managed")
+
+    @property
+    def direct_count(self) -> int:
+        return sum(1 for t in self.tools if t.route == "direct")
+
+    @property
+    def unavailable_count(self) -> int:
+        return sum(1 for t in self.tools if t.route == "unavailable")
+
+
+@dataclass
 class GatewayState:
     state: str = "unknown"
     pid: Optional[int] = None
@@ -473,6 +504,7 @@ class GatewayState:
     updated_at: Optional[datetime] = None
     active_agents: int = 0
     platforms: list[PlatformStatus] = field(default_factory=list)
+    managed_tools: ManagedToolsState = field(default_factory=ManagedToolsState)
 
 
 # ── Model capabilities ──────────────────────────────────────
