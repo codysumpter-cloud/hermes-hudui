@@ -57,6 +57,7 @@ export const translations = {
     'providers.expires': 'expires',
     'providers.obtained': 'obtained',
     'providers.scope': 'scope',
+    'providers.driftWarnings': 'Provider drift warnings',
 
     // Gateway
     'gateway.title': 'Gateway Control',
@@ -80,6 +81,10 @@ export const translations = {
     'gateway.managed': 'managed',
     'gateway.direct': 'direct',
     'gateway.unavailable': 'unavailable',
+    'gateway.diagnostics': 'Diagnostics',
+    'gateway.missingConfig': 'Missing config',
+    'gateway.safeActions': 'Safe actions',
+    'gateway.none': 'none',
 
     // Model Info
     'modelInfo.title': 'Model',
@@ -118,6 +123,17 @@ export const translations = {
     'modelInfo.apiCalls': 'API Calls',
     'modelInfo.toolCalls': 'Tool Calls',
     'modelInfo.lastUsed': 'Last Used',
+    'modelInfo.period7d': '7d',
+    'modelInfo.period30d': '30d',
+    'modelInfo.periodAll': 'All',
+    'modelInfo.periodDays': 'Last {days} days',
+    'modelInfo.showSessions': 'Show sessions',
+    'modelInfo.hideSessions': 'Hide sessions',
+    'modelInfo.sessionDrilldown': 'Session Drilldown',
+    'modelInfo.session': 'Session',
+    'modelInfo.source': 'Source',
+    'modelInfo.messages': 'Messages',
+    'modelInfo.duration': 'Duration',
 
     // Dashboard
     'dashboard.title': 'Dashboard',
@@ -217,6 +233,9 @@ export const translations = {
     'health.freshness': 'Data Freshness',
     'health.database': 'Database Integrity',
     'health.actionDone': 'Action completed',
+    'health.filterAll': 'All',
+    'health.filterBroken': 'Broken',
+    'health.filterWarnings': 'Warnings',
 
     // Sessions
     'sessions.title': 'Sessions',
@@ -443,6 +462,21 @@ export const translations = {
     'tokenCosts.byModel': 'By Model',
     'tokenCosts.dailyTrend': 'Daily Cost Trend',
     'tokenCosts.costPerDay': 'Cost/day (USD)',
+    'tokenCosts.estimated': 'Estimated',
+    'tokenCosts.actual': 'Actual',
+    'tokenCosts.delta': 'Delta',
+    'tokenCosts.billed': 'Billed',
+    'tokenCosts.billedToday': 'billed today',
+    'tokenCosts.billedAllTime': 'billed all-time',
+    'tokenCosts.cacheSaved': 'Cache saved',
+    'tokenCosts.trend': '7-Day Trend',
+    'tokenCosts.last7Days': 'last 7 days',
+    'tokenCosts.prev7Days': 'prev 7 days',
+    'tokenCosts.change': 'Change',
+    'tokenCosts.actualCoverage': 'actual coverage',
+    'tokenCosts.topSessions': 'Top Expensive Sessions',
+    'tokenCosts.session': 'Session',
+    'tokenCosts.tokens': 'Tokens',
 
     // Corrections
     'corrections.title': 'Corrections',
@@ -569,6 +603,7 @@ export const translations = {
     'providers.expires': '到期',
     'providers.obtained': '获取',
     'providers.scope': '范围',
+    'providers.driftWarnings': '提供商漂移警告',
 
     // Gateway
     'gateway.title': '网关控制',
@@ -592,6 +627,10 @@ export const translations = {
     'gateway.managed': '托管',
     'gateway.direct': '直连',
     'gateway.unavailable': '不可用',
+    'gateway.diagnostics': '诊断',
+    'gateway.missingConfig': '缺失配置',
+    'gateway.safeActions': '安全操作',
+    'gateway.none': '无',
 
     // Model Info
     'modelInfo.title': '模型',
@@ -630,6 +669,17 @@ export const translations = {
     'modelInfo.apiCalls': 'API 调用',
     'modelInfo.toolCalls': '工具调用',
     'modelInfo.lastUsed': '上次使用',
+    'modelInfo.period7d': '7 天',
+    'modelInfo.period30d': '30 天',
+    'modelInfo.periodAll': '全部',
+    'modelInfo.periodDays': '最近 {days} 天',
+    'modelInfo.showSessions': '显示会话',
+    'modelInfo.hideSessions': '隐藏会话',
+    'modelInfo.sessionDrilldown': '会话明细',
+    'modelInfo.session': '会话',
+    'modelInfo.source': '来源',
+    'modelInfo.messages': '消息',
+    'modelInfo.duration': '时长',
 
     // Dashboard
     'dashboard.title': '仪表盘',
@@ -729,6 +779,9 @@ export const translations = {
     'health.freshness': '数据新鲜度',
     'health.database': '数据库完整性',
     'health.actionDone': '操作已完成',
+    'health.filterAll': '全部',
+    'health.filterBroken': '故障',
+    'health.filterWarnings': '警告',
 
     // Sessions
     'sessions.title': '会话',
@@ -955,6 +1008,21 @@ export const translations = {
     'tokenCosts.byModel': '按模型',
     'tokenCosts.dailyTrend': '每日成本趋势',
     'tokenCosts.costPerDay': '每日成本 (USD)',
+    'tokenCosts.estimated': '预估',
+    'tokenCosts.actual': '实际',
+    'tokenCosts.delta': '差值',
+    'tokenCosts.billed': '计费',
+    'tokenCosts.billedToday': '今日计费',
+    'tokenCosts.billedAllTime': '总计计费',
+    'tokenCosts.cacheSaved': '缓存节省',
+    'tokenCosts.trend': '7日趋势',
+    'tokenCosts.last7Days': '最近7日',
+    'tokenCosts.prev7Days': '前7日',
+    'tokenCosts.change': '变化',
+    'tokenCosts.actualCoverage': '实际覆盖率',
+    'tokenCosts.topSessions': '最高成本会话',
+    'tokenCosts.session': '会话',
+    'tokenCosts.tokens': 'Tokens',
 
     // Corrections
     'corrections.title': '纠正',

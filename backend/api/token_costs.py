@@ -2,14 +2,21 @@
 
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter
 
 from backend.collectors.utils import default_hermes_dir
 
-router = APIRouter()
+try:
+    router = APIRouter()
+except TypeError:
+    class _NoopRouter:
+        def get(self, *_args, **_kwargs):
+            return lambda fn: fn
+
+    router = _NoopRouter()
 
 # ── Pricing per 1M tokens (USD) ──────────────────────────
 # Source: https://www.anthropic.com/pricing (April 2026)
@@ -115,6 +122,88 @@ def _calc_cost(tokens: dict, pricing: dict) -> float:
     )
 
 
+def _round_money(value: float | None) -> float:
+    return round(float(value or 0), 2)
+
+
+def _pct(delta: float, base: float) -> float | None:
+    if not base:
+        return None
+    return round((delta / base) * 100, 1)
+
+
+def _cache_savings(tokens: dict, pricing: dict) -> float:
+    full_price = (tokens.get("cache_read", 0) / 1_000_000) * pricing.get("input", 0)
+    discounted = (tokens.get("cache_read", 0) / 1_000_000) * pricing.get("cache_read", 0)
+    return max(0.0, full_price - discounted)
+
+
+def _new_bucket() -> dict:
+    return {
+        "session_count": 0, "message_count": 0,
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read_tokens": 0, "cache_write_tokens": 0,
+        "reasoning_tokens": 0, "cost": 0.0,
+        "estimated_cost": 0.0, "actual_cost": 0.0, "billed_cost": 0.0,
+        "actual_estimated_cost": 0.0,
+        "actual_session_count": 0, "cache_savings": 0.0,
+    }
+
+
+def _add_usage(
+    bucket: dict,
+    row: sqlite3.Row,
+    tokens: dict,
+    estimated: float,
+    actual: float | None,
+    savings: float,
+) -> None:
+    billed = actual if actual is not None else estimated
+    bucket["session_count"] += 1
+    bucket["message_count"] += row["message_count"] or 0
+    bucket["input_tokens"] += tokens["input"]
+    bucket["output_tokens"] += tokens["output"]
+    bucket["cache_read_tokens"] += tokens["cache_read"]
+    bucket["cache_write_tokens"] += tokens["cache_write"]
+    bucket["reasoning_tokens"] += tokens["reasoning"]
+    bucket["cost"] += billed
+    bucket["estimated_cost"] += estimated
+    bucket["billed_cost"] += billed
+    bucket["cache_savings"] += savings
+    if actual is not None:
+        bucket["actual_cost"] += actual
+        bucket["actual_estimated_cost"] += estimated
+        bucket["actual_session_count"] += 1
+
+
+def _finalize_bucket(bucket: dict) -> dict:
+    estimated = bucket["estimated_cost"]
+    actual = bucket["actual_cost"]
+    actual_estimated = bucket["actual_estimated_cost"]
+    actual_delta = actual - actual_estimated
+    total_tokens = bucket["input_tokens"] + bucket["output_tokens"]
+    coverage = (
+        bucket["actual_session_count"] / bucket["session_count"] * 100
+        if bucket["session_count"] else 0
+    )
+    return {
+        **bucket,
+        "total_tokens": total_tokens,
+        "cost": _round_money(bucket["cost"]),
+        "estimated_cost": _round_money(estimated),
+        "actual_cost": _round_money(actual),
+        "billed_cost": _round_money(bucket["billed_cost"]),
+        "actual_estimated_cost_usd": _round_money(actual_estimated),
+        "estimated_cost_usd": _round_money(estimated),
+        "actual_cost_usd": _round_money(actual),
+        "billed_cost_usd": _round_money(bucket["billed_cost"]),
+        "actual_delta_usd": _round_money(actual_delta),
+        "actual_delta_pct": _pct(actual_delta, actual_estimated),
+        "actual_coverage_pct": round(coverage, 1),
+        "cache_savings_usd": _round_money(bucket["cache_savings"]),
+    }
+
+
 @router.get("/token-costs")
 async def get_token_costs():
     """Token usage and estimated costs, broken down by model."""
@@ -130,50 +219,48 @@ async def get_token_costs():
 
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # actual_cost_usd was added in hermes v0.9.0; fall back gracefully for
-    # older databases that don't have the column yet.
-    try:
-        cur.execute("""
-            SELECT id, source, started_at, model,
-                   message_count, tool_call_count,
-                   input_tokens, output_tokens,
-                   cache_read_tokens, cache_write_tokens,
-                   reasoning_tokens,
-                   actual_cost_usd
-            FROM sessions
-            ORDER BY started_at ASC
-        """)
-    except sqlite3.OperationalError:
-        cur.execute("""
-            SELECT id, source, started_at, model,
-                   message_count, tool_call_count,
-                   input_tokens, output_tokens,
-                   cache_read_tokens, cache_write_tokens,
-                   reasoning_tokens,
-                   NULL AS actual_cost_usd
-            FROM sessions
-            ORDER BY started_at ASC
-        """)
+    cur.execute("PRAGMA table_info(sessions)")
+    columns = {row["name"] for row in cur.fetchall()}
+    title_column = "title" if "title" in columns else "id AS title"
+    actual_cost_column = (
+        "actual_cost_usd"
+        if "actual_cost_usd" in columns else "NULL AS actual_cost_usd"
+    )
+    cur.execute(f"""
+        SELECT id, source, {title_column}, started_at, model,
+               message_count, tool_call_count,
+               input_tokens, output_tokens,
+               cache_read_tokens, cache_write_tokens,
+               reasoning_tokens,
+               {actual_cost_column}
+        FROM sessions
+        ORDER BY started_at ASC
+    """)
 
     # Per-model aggregation
     by_model: dict[str, dict] = {}
 
     # Today aggregation
-    today_data = {
-        "session_count": 0, "message_count": 0,
-        "input_tokens": 0, "output_tokens": 0,
-        "cache_read_tokens": 0, "cache_write_tokens": 0,
-        "reasoning_tokens": 0, "cost": 0.0,
-    }
+    today_data = _new_bucket()
 
     # All-time totals
     all_input = all_output = all_cache_r = all_cache_w = all_reasoning = 0
     all_messages = all_tool_calls = 0
-    all_cost = 0.0
+    all_estimated_cost = 0.0
+    all_actual_cost = 0.0
+    all_actual_estimated_cost = 0.0
+    all_billed_cost = 0.0
+    all_cache_savings = 0.0
+    actual_sessions = 0
     total_sessions = 0
 
     # Daily trend
     daily: dict[str, dict] = {}
+    top_sessions: list[dict] = []
+    recent_start = datetime.now() - timedelta(days=7)
+    previous_start = datetime.now() - timedelta(days=14)
+    recent_7d_cost = 0.0
+    previous_7d_cost = 0.0
 
     for row in cur.fetchall():
         model = row["model"] or "unknown"
@@ -192,37 +279,23 @@ async def get_token_costs():
 
         pricing, matched = _get_pricing(model)
         actual_cost = row["actual_cost_usd"]
-        cost = float(actual_cost) if actual_cost is not None else _calc_cost(tokens, pricing)
+        actual = float(actual_cost) if actual_cost is not None else None
+        estimated = _calc_cost(tokens, pricing)
+        cost = actual if actual is not None else estimated
+        savings = _cache_savings(tokens, pricing)
 
         # Per-model
         if model not in by_model:
             by_model[model] = {
                 "model": model, "matched_pricing": matched,
-                "session_count": 0, "message_count": 0,
-                "input_tokens": 0, "output_tokens": 0,
-                "cache_read_tokens": 0, "cache_write_tokens": 0,
-                "reasoning_tokens": 0, "cost": 0.0,
+                **_new_bucket(),
             }
         m = by_model[model]
-        m["session_count"] += 1
-        m["message_count"] += row["message_count"] or 0
-        m["input_tokens"] += tokens["input"]
-        m["output_tokens"] += tokens["output"]
-        m["cache_read_tokens"] += tokens["cache_read"]
-        m["cache_write_tokens"] += tokens["cache_write"]
-        m["reasoning_tokens"] += tokens["reasoning"]
-        m["cost"] += cost
+        _add_usage(m, row, tokens, estimated, actual, savings)
 
         # Today
         if is_today:
-            today_data["session_count"] += 1
-            today_data["message_count"] += row["message_count"] or 0
-            today_data["input_tokens"] += tokens["input"]
-            today_data["output_tokens"] += tokens["output"]
-            today_data["cache_read_tokens"] += tokens["cache_read"]
-            today_data["cache_write_tokens"] += tokens["cache_write"]
-            today_data["reasoning_tokens"] += tokens["reasoning"]
-            today_data["cost"] += cost
+            _add_usage(today_data, row, tokens, estimated, actual, savings)
 
         # All-time
         total_sessions += 1
@@ -233,33 +306,77 @@ async def get_token_costs():
         all_cache_r += tokens["cache_read"]
         all_cache_w += tokens["cache_write"]
         all_reasoning += tokens["reasoning"]
-        all_cost += cost
+        all_estimated_cost += estimated
+        all_billed_cost += cost
+        all_cache_savings += savings
+        if actual is not None:
+            all_actual_cost += actual
+            all_actual_estimated_cost += estimated
+            actual_sessions += 1
 
         # Daily
         if day not in daily:
-            daily[day] = {"cost": 0.0, "tokens": 0, "sessions": 0}
+            daily[day] = {
+                "cost": 0.0,
+                "estimated_cost": 0.0,
+                "actual_cost": 0.0,
+                "tokens": 0,
+                "sessions": 0,
+                "cache_savings": 0.0,
+            }
         daily[day]["cost"] += cost
+        daily[day]["estimated_cost"] += estimated
+        if actual is not None:
+            daily[day]["actual_cost"] += actual
         daily[day]["tokens"] += tokens["input"] + tokens["output"]
         daily[day]["sessions"] += 1
+        daily[day]["cache_savings"] += savings
+
+        if started:
+            if started >= recent_start:
+                recent_7d_cost += cost
+            elif started >= previous_start:
+                previous_7d_cost += cost
+
+        top_sessions.append({
+            "id": row["id"],
+            "source": row["source"] or "unknown",
+            "title": row["title"] or row["id"],
+            "date": day,
+            "model": model,
+            "matched_pricing": matched,
+            "message_count": row["message_count"] or 0,
+            "tool_call_count": row["tool_call_count"] or 0,
+            "input_tokens": tokens["input"],
+            "output_tokens": tokens["output"],
+            "cache_read_tokens": tokens["cache_read"],
+            "cache_write_tokens": tokens["cache_write"],
+            "reasoning_tokens": tokens["reasoning"],
+            "total_tokens": tokens["input"] + tokens["output"],
+            "estimated_cost_usd": _round_money(estimated),
+            "actual_cost_usd": _round_money(actual),
+            "billed_cost_usd": _round_money(cost),
+            "actual_delta_usd": _round_money(
+                (actual - estimated) if actual is not None else 0
+            ),
+            "cache_savings_usd": _round_money(savings),
+        })
 
     conn.close()
 
     # Sort models by cost descending
     model_list = sorted(by_model.values(), key=lambda m: -m["cost"])
 
-    # Round costs
-    for m in model_list:
-        m["cost"] = round(m["cost"], 2)
-    today_data["cost"] = round(today_data["cost"], 2)
+    model_list = [_finalize_bucket(m) for m in model_list]
+    today_final = _finalize_bucket(today_data)
 
     sorted_days = sorted(daily.keys())
+    delta = recent_7d_cost - previous_7d_cost
 
     return {
         "today": {
             "date": today,
-            **today_data,
-            "total_tokens": today_data["input_tokens"] + today_data["output_tokens"],
-            "estimated_cost_usd": today_data["cost"],
+            **today_final,
         },
         "all_time": {
             "session_count": total_sessions,
@@ -271,13 +388,40 @@ async def get_token_costs():
             "cache_write_tokens": all_cache_w,
             "reasoning_tokens": all_reasoning,
             "total_tokens": all_input + all_output,
-            "estimated_cost_usd": round(all_cost, 2),
+            "cost": _round_money(all_billed_cost),
+            "estimated_cost_usd": _round_money(all_estimated_cost),
+            "actual_cost_usd": _round_money(all_actual_cost),
+            "actual_estimated_cost_usd": _round_money(all_actual_estimated_cost),
+            "billed_cost_usd": _round_money(all_billed_cost),
+            "actual_delta_usd": _round_money(all_actual_cost - all_actual_estimated_cost),
+            "actual_delta_pct": _pct(
+                all_actual_cost - all_actual_estimated_cost,
+                all_actual_estimated_cost,
+            ),
+            "actual_session_count": actual_sessions,
+            "actual_coverage_pct": round(
+                (actual_sessions / total_sessions * 100) if total_sessions else 0,
+                1,
+            ),
+            "cache_savings_usd": _round_money(all_cache_savings),
         },
         "by_model": model_list,
+        "top_sessions": sorted(top_sessions, key=lambda s: -s["billed_cost_usd"])[:10],
+        "trend_summary": {
+            "recent_7d_cost_usd": _round_money(recent_7d_cost),
+            "previous_7d_cost_usd": _round_money(previous_7d_cost),
+            "delta_usd": _round_money(delta),
+            "delta_pct": _pct(delta, previous_7d_cost),
+            "direction": "up" if delta > 0 else "down" if delta < 0 else "flat",
+        },
         "daily_trend": [
             {
                 "date": day,
                 "cost": round(daily[day]["cost"], 2),
+                "estimated_cost_usd": round(daily[day]["estimated_cost"], 2),
+                "actual_cost_usd": round(daily[day]["actual_cost"], 2),
+                "billed_cost_usd": round(daily[day]["cost"], 2),
+                "cache_savings_usd": round(daily[day]["cache_savings"], 2),
                 "tokens": daily[day]["tokens"],
                 "sessions": daily[day]["sessions"],
             }

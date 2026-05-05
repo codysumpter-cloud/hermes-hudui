@@ -443,12 +443,16 @@ class ProviderAuth:
     scope: str = ""
     is_active: bool = False
     auth_mode: str = ""
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ProvidersState:
     providers: list[ProviderAuth] = field(default_factory=list)
     active_provider: Optional[str] = None
+    config_provider: str = ""
+    config_model: str = ""
+    warnings: list[str] = field(default_factory=list)
 
 
 # ── Gateway status + actions ────────────────────────────────
@@ -470,8 +474,14 @@ class ManagedToolStatus:
     enabled: bool = False
     available: bool = False
     route: str = "unavailable"  # managed | direct | unavailable
+    config_section: str = ""
+    gateway_enabled: bool = False
+    has_direct_credential: bool = False
     direct_env_vars: list[str] = field(default_factory=list)
     configured_env_vars: list[str] = field(default_factory=list)
+    missing_config: list[str] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
+    safe_actions: list[str] = field(default_factory=list)
     reason: str = ""
 
 
@@ -531,6 +541,41 @@ class ModelCapabilities:
 
 
 @dataclass
+class ModelSessionUsage:
+    id: str
+    title: str = ""
+    source: str = ""
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    messages: int = 0
+    api_calls: int = 0
+    tool_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    actual_cost_usd: float = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+            + self.reasoning_tokens
+        )
+
+    @property
+    def duration_seconds(self) -> int:
+        if not self.started_at or not self.ended_at:
+            return 0
+        return max(0, round((self.ended_at - self.started_at).total_seconds()))
+
+
+@dataclass
 class ModelUsage:
     model: str
     provider: str = ""
@@ -552,6 +597,7 @@ class ModelUsage:
     supports_structured_output: bool = False
     context_window: int = 0
     max_output_tokens: int = 0
+    session_details: list[ModelSessionUsage] = field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:

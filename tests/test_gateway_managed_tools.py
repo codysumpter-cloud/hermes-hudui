@@ -32,6 +32,16 @@ browser:
     assert by_key["web"].route == "managed"
     assert by_key["web"].enabled is True
     assert by_key["web"].available is True
+    assert by_key["web"].config_section == "web"
+    assert by_key["web"].gateway_enabled is True
+    assert by_key["web"].has_direct_credential is False
+    assert by_key["web"].missing_config == []
+    assert by_key["web"].diagnostics == [
+        "Gateway opt-in enabled in web.use_gateway.",
+        "Nous Portal auth is present.",
+        "No direct credential detected.",
+    ]
+    assert by_key["web"].safe_actions == ["gateway-restart"]
     assert by_key["image_gen"].gateway_service == "fal-queue"
     assert by_key["tts"].gateway_service == "openai-audio"
     assert by_key["browser"].gateway_service == "browser-use"
@@ -58,6 +68,14 @@ def test_collect_managed_tools_reports_direct_credentials_without_gateway_opt_in
     assert state.managed_count == 0
     assert state.direct_count == 4
     assert by_key["web"].route == "direct"
+    assert by_key["web"].gateway_enabled is False
+    assert by_key["web"].has_direct_credential is True
+    assert by_key["web"].missing_config == []
+    assert by_key["web"].diagnostics == [
+        "Gateway opt-in disabled in web.use_gateway.",
+        "Direct credential configured: FIRECRAWL_API_KEY.",
+    ]
+    assert by_key["web"].safe_actions == []
     assert by_key["image_gen"].route == "direct"
     assert by_key["tts"].route == "direct"
     assert by_key["browser"].route == "direct"
@@ -87,6 +105,22 @@ browser:
     assert state.unavailable_count == 4
     assert by_key["web"].route == "unavailable"
     assert "Nous Portal auth" in by_key["web"].reason
+    assert by_key["web"].gateway_enabled is True
+    assert by_key["web"].has_direct_credential is False
+    assert by_key["web"].missing_config == [
+        "Nous Portal auth",
+        "direct Firecrawl/Exa/Parallel/Tavily key",
+    ]
+    assert by_key["web"].diagnostics == [
+        "Gateway opt-in enabled in web.use_gateway.",
+        "Nous Portal auth is missing.",
+        "No direct credential detected.",
+    ]
+    assert by_key["web"].safe_actions == ["gateway-restart"]
     assert by_key["image_gen"].reason == "No gateway opt-in or direct FAL key configured."
+    assert by_key["image_gen"].missing_config == [
+        "image_gen.use_gateway: true",
+        "direct FAL key",
+    ]
     assert by_key["tts"].reason == "No gateway opt-in or direct OpenAI audio key configured."
     assert "Nous Portal auth" in by_key["browser"].reason

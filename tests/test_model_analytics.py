@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 from backend.collectors.model_analytics import collect_model_analytics
@@ -141,6 +142,82 @@ def test_model_analytics_groups_usage_and_cost_math(tmp_path: Path) -> None:
     assert by_model["claude-sonnet-4-6"].estimated_cost_usd == 1.0
     assert by_model["claude-sonnet-4-6"].actual_cost_usd == 0.90
     assert by_model["gpt-5.1"].actual_cost_usd == 0
+
+
+def test_model_analytics_filters_period_and_keeps_session_drilldown(tmp_path: Path) -> None:
+    hermes_dir = tmp_path / "hermes"
+    hermes_dir.mkdir()
+    db_path = hermes_dir / "state.db"
+    _make_state_db(db_path)
+    now = time.time()
+    old_started_at = now - 9 * 86400
+    recent_started_at = now - 2 * 86400
+    newest_started_at = now - 3600
+    _insert_session(
+        db_path,
+        id="old",
+        source="cli",
+        title="Old run",
+        started_at=old_started_at,
+        ended_at=old_started_at + 120,
+        message_count=1,
+        input_tokens=100,
+        output_tokens=50,
+        estimated_cost_usd=0.10,
+        actual_cost_usd=0.08,
+        billing_provider="anthropic",
+        api_call_count=1,
+        model="claude-sonnet-4-6",
+    )
+    _insert_session(
+        db_path,
+        id="recent",
+        source="cli",
+        title="Recent run",
+        started_at=recent_started_at,
+        ended_at=recent_started_at + 60,
+        message_count=2,
+        tool_call_count=1,
+        input_tokens=200,
+        output_tokens=100,
+        estimated_cost_usd=0.20,
+        actual_cost_usd=0.16,
+        billing_provider="anthropic",
+        api_call_count=2,
+        model="claude-sonnet-4-6",
+    )
+    _insert_session(
+        db_path,
+        id="newest",
+        source="telegram",
+        title="Newest run",
+        started_at=newest_started_at,
+        ended_at=newest_started_at + 30,
+        message_count=3,
+        tool_call_count=2,
+        input_tokens=300,
+        output_tokens=150,
+        estimated_cost_usd=0.30,
+        actual_cost_usd=0.24,
+        billing_provider="anthropic",
+        api_call_count=3,
+        model="claude-sonnet-4-6",
+    )
+
+    state = collect_model_analytics(hermes_dir=str(hermes_dir), days=7)
+    usage = state.models[0]
+
+    assert state.period_days == 7
+    assert usage.sessions == 2
+    assert usage.total_tokens == 750
+    assert [session.id for session in usage.session_details] == ["newest", "recent"]
+    assert usage.session_details[0].title == "Newest run"
+    assert usage.session_details[0].source == "telegram"
+    assert usage.session_details[0].messages == 3
+    assert usage.session_details[0].api_calls == 3
+    assert usage.session_details[0].tool_calls == 2
+    assert usage.session_details[0].total_tokens == 450
+    assert usage.session_details[0].duration_seconds == 30
 
 
 def test_model_analytics_enriches_capabilities_from_models_cache(tmp_path: Path) -> None:

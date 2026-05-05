@@ -15,6 +15,7 @@ interface Provider {
   scope: string
   is_active: boolean
   auth_mode: string
+  warnings: string[]
 }
 
 const STATUS_COLOR: Record<Status, string> = {
@@ -33,7 +34,13 @@ const STATUS_LABEL: Record<Status, string> = {
 
 export default function ProvidersPanel() {
   const { t } = useTranslation()
-  const { data, isLoading } = useApi<{ providers: Provider[]; active_provider: string | null }>('/providers', 30000)
+  const { data, isLoading } = useApi<{
+    providers: Provider[]
+    active_provider: string | null
+    config_provider: string
+    config_model: string
+    warnings: string[]
+  }>('/providers', 30000)
 
   if (isLoading && !data) {
     return (
@@ -44,12 +51,29 @@ export default function ProvidersPanel() {
   }
 
   const providers: Provider[] = data?.providers ?? []
+  const warnings = data?.warnings ?? []
 
   return (
     <Panel title={t('providers.title')} className="col-span-full">
       <div className="text-[12px] mb-3" style={{ color: 'var(--hud-text-dim)' }}>
         {t('providers.subtitle')}
       </div>
+      {warnings.length > 0 && (
+        <div
+          className="mb-3 space-y-1.5 py-2 px-3 text-[12px]"
+          style={{
+            border: '1px solid var(--hud-warning)',
+            borderLeft: '3px solid var(--hud-warning)',
+            background: 'var(--hud-panel-alt, transparent)',
+            color: 'var(--hud-warning)',
+          }}
+        >
+          <div className="font-medium">{t('providers.driftWarnings')}</div>
+          {warnings.map((warning) => (
+            <div key={warning}>● {warning}</div>
+          ))}
+        </div>
+      )}
       {providers.length === 0 && (
         <div className="text-[13px]" style={{ color: 'var(--hud-text-dim)' }}>
           {t('providers.none')}
@@ -99,6 +123,13 @@ export default function ProvidersPanel() {
             {p.scope && (
               <div className="mt-0.5 text-[11px]" style={{ color: 'var(--hud-text-dim)' }}>
                 {t('providers.scope')}: {p.scope}
+              </div>
+            )}
+            {(p.warnings ?? []).length > 0 && (
+              <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: 'var(--hud-warning)' }}>
+                {(p.warnings ?? []).map((warning) => (
+                  <div key={warning}>● {warning}</div>
+                ))}
               </div>
             )}
           </div>

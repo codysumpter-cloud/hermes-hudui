@@ -3,6 +3,7 @@ import { useApi } from '../hooks/useApi'
 import Panel from './Panel'
 import { timeAgo } from '../lib/utils'
 import { useTranslation } from '../i18n'
+import type { TranslationKey } from '../i18n'
 import { mutate } from 'swr'
 
 interface GatewayData {
@@ -29,8 +30,14 @@ interface GatewayData {
       enabled: boolean
       available: boolean
       route: 'managed' | 'direct' | 'unavailable'
+      config_section: string
+      gateway_enabled: boolean
+      has_direct_credential: boolean
       direct_env_vars: string[]
       configured_env_vars: string[]
+      missing_config: string[]
+      diagnostics: string[]
+      safe_actions: string[]
       reason: string
     }[]
     nous_auth_present: boolean
@@ -60,6 +67,19 @@ function routeColor(route: string): string {
   if (route === 'managed') return 'var(--hud-primary)'
   if (route === 'direct') return 'var(--hud-success)'
   return 'var(--hud-error)'
+}
+
+const SAFE_ACTIONS: Record<string, { postPath: string; labelKey: TranslationKey }> = {
+  'gateway-restart': { postPath: '/api/gateway/restart', labelKey: 'gateway.restart' },
+}
+
+type SafeAction = {
+  name: string
+  meta: { postPath: string; labelKey: TranslationKey }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function ActionRunner({
@@ -104,9 +124,9 @@ function ActionRunner({
         setPolling(false)
         onStateChange()
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!mountedRef.current) return
-      setError(String(e.message || e))
+      setError(errorMessage(e))
       setPolling(false)
     }
   }, [actionName, onStateChange])
@@ -120,9 +140,9 @@ function ActionRunner({
       if (!res.ok) throw new Error(await res.text())
       if (!mountedRef.current) return
       timerRef.current = window.setTimeout(pollOnce, 500)
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!mountedRef.current) return
-      setError(String(e.message || e))
+      setError(errorMessage(e))
       setPolling(false)
     }
   }
@@ -268,7 +288,14 @@ export default function GatewayPanel() {
         <span style={{ color: 'var(--hud-error)' }}>{t('gateway.unavailable')}: {data?.managed_tools?.unavailable_count ?? 0}</span>
       </div>
       <div className="grid md:grid-cols-2 gap-2">
-        {(data?.managed_tools?.tools ?? []).map((tool) => (
+        {(data?.managed_tools?.tools ?? []).map((tool) => {
+          const safeActions = tool.safe_actions.reduce<SafeAction[]>((actions, name) => {
+            const meta = SAFE_ACTIONS[name]
+            if (meta) actions.push({ name, meta })
+            return actions
+          }, [])
+
+          return (
           <div key={tool.key} className="p-3 border" style={{ borderColor: 'var(--hud-border)' }}>
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -282,13 +309,62 @@ export default function GatewayPanel() {
             <div className="mt-2 text-[12px]" style={{ color: tool.available ? 'var(--hud-text-dim)' : 'var(--hud-error)' }}>
               {tool.reason}
             </div>
+            <div className="mt-3 grid sm:grid-cols-2 gap-3 text-[11px]">
+              <div>
+                <div className="uppercase tracking-widest mb-1" style={{ color: 'var(--hud-text-dim)' }}>
+                  {t('gateway.diagnostics')}
+                </div>
+                <ul className="space-y-1">
+                  {tool.diagnostics.map((diagnostic) => (
+                    <li key={diagnostic} style={{ color: 'var(--hud-text-dim)' }}>
+                      {diagnostic}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="uppercase tracking-widest mb-1" style={{ color: 'var(--hud-text-dim)' }}>
+                  {t('gateway.missingConfig')}
+                </div>
+                {tool.missing_config.length > 0 ? (
+                  <ul className="space-y-1">
+                    {tool.missing_config.map((item) => (
+                      <li key={item} style={{ color: 'var(--hud-error)' }}>
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{ color: 'var(--hud-success)' }}>{t('gateway.none')}</div>
+                )}
+              </div>
+            </div>
             {tool.configured_env_vars.length > 0 && (
               <div className="mt-2 text-[11px] font-mono" style={{ color: 'var(--hud-success)' }}>
                 {tool.configured_env_vars.join(', ')}
               </div>
             )}
+            {safeActions.length > 0 && (
+              <div className="mt-3">
+                <div className="uppercase tracking-widest mb-2 text-[11px]" style={{ color: 'var(--hud-text-dim)' }}>
+                  {t('gateway.safeActions')}
+                </div>
+                <div className="space-y-2">
+                  {safeActions.map((action) => (
+                    <ActionRunner
+                      key={action.name}
+                      actionName={action.name}
+                      postPath={action.meta.postPath}
+                      label={t(action.meta.labelKey)}
+                      onStateChange={refresh}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-        ))}
+          )
+        })}
       </div>
     </Panel>
     </>

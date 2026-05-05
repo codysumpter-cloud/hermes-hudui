@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useApi } from '../hooks/useApi'
 import Panel, { Sparkline } from './Panel'
 import { formatTokens } from '../lib/utils'
@@ -12,6 +13,29 @@ function StatCard({ value, label }: { value: string | number; label: string }) {
   )
 }
 
+function money(value: number | null | undefined) {
+  return `$${(value || 0).toFixed(2)}`
+}
+
+function DeltaBadge({ value, pct }: { value: number; pct?: number | null }) {
+  const color = value > 0 ? 'var(--hud-warning)' : value < 0 ? 'var(--hud-success)' : 'var(--hud-text-dim)'
+  const sign = value > 0 ? '+' : ''
+  return (
+    <span style={{ color }}>
+      {sign}{money(value)}{pct !== null && pct !== undefined ? ` (${sign}${pct.toFixed(1)}%)` : ''}
+    </span>
+  )
+}
+
+function DetailRow({ label, value, tone }: { label: string; value: ReactNode; tone?: string }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <span style={{ color: 'var(--hud-text-dim)' }}>{label}</span>
+      <span className="text-right" style={{ color: tone || 'inherit' }}>{value}</span>
+    </div>
+  )
+}
+
 function ModelCard({ m }: { m: any }) {
   const { t } = useTranslation()
   const isFree = m.matched_pricing?.includes('local') || m.matched_pricing?.includes('free')
@@ -22,7 +46,7 @@ function ModelCard({ m }: { m: any }) {
       <div className="flex items-center justify-between mb-2">
         <span className="font-bold text-[13px]" style={{ color: 'var(--hud-primary)' }}>{m.model}</span>
         <span className="text-[13px] px-1.5 py-0.5" style={{ background: 'var(--hud-bg-hover)', color: pricingColor }}>
-          {isFree ? t('tokenCosts.free') : `$${m.cost.toFixed(2)}`}
+          {isFree ? t('tokenCosts.free') : money(m.billed_cost_usd ?? m.cost)}
         </span>
       </div>
       <div className="grid grid-cols-3 gap-2 text-[13px] mb-2">
@@ -31,16 +55,23 @@ function ModelCard({ m }: { m: any }) {
         <div><span style={{ color: 'var(--hud-primary)' }}>{formatTokens(m.input_tokens + m.output_tokens)}</span> <span style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.tok')}</span></div>
       </div>
       <div className="text-[13px] space-y-0.5" style={{ color: 'var(--hud-text-dim)' }}>
-        <div className="flex justify-between"><span>{t('tokenCosts.input')}</span><span>{formatTokens(m.input_tokens)}</span></div>
-        <div className="flex justify-between"><span>{t('tokenCosts.output')}</span><span>{formatTokens(m.output_tokens)}</span></div>
+        <DetailRow label={t('tokenCosts.input')} value={formatTokens(m.input_tokens)} />
+        <DetailRow label={t('tokenCosts.output')} value={formatTokens(m.output_tokens)} />
         {m.cache_read_tokens > 0 && (
-          <div className="flex justify-between"><span>{t('tokenCosts.cacheRead')}</span><span>{formatTokens(m.cache_read_tokens)}</span></div>
+          <DetailRow label={t('tokenCosts.cacheRead')} value={formatTokens(m.cache_read_tokens)} />
+        )}
+        {m.cache_savings_usd > 0 && (
+          <DetailRow label={t('tokenCosts.cacheSaved')} value={money(m.cache_savings_usd)} tone="var(--hud-success)" />
         )}
       </div>
       {!isFree && (
-        <div className="mt-2 pt-2 text-[13px] font-bold flex justify-between" style={{ borderTop: '1px solid var(--hud-border)' }}>
-          <span>{t('tokenCosts.totalCost')}</span>
-          <span style={{ color: 'var(--hud-accent)' }}>${m.cost.toFixed(2)}</span>
+        <div className="mt-2 pt-2 text-[13px] space-y-0.5" style={{ borderTop: '1px solid var(--hud-border)' }}>
+          <DetailRow label={t('tokenCosts.estimated')} value={money(m.estimated_cost_usd)} />
+          <DetailRow label={t('tokenCosts.actual')} value={money(m.actual_cost_usd)} />
+          <DetailRow label={t('tokenCosts.delta')} value={<DeltaBadge value={m.actual_delta_usd || 0} pct={m.actual_delta_pct} />} />
+          <div className="font-bold">
+            <DetailRow label={t('tokenCosts.billed')} value={money(m.billed_cost_usd)} tone="var(--hud-accent)" />
+          </div>
         </div>
       )}
       {isFree && (
@@ -64,8 +95,15 @@ export default function TokenCostsPanel() {
     return <Panel title={t('tokenCosts.title')} className="col-span-full"><div className="glow text-[13px] animate-pulse">{t('tokenCosts.loading')}</div></Panel>
   }
 
-  const { today, all_time: allTime, by_model: byModel, daily_trend: dailyTrend } = data
-  const costValues = dailyTrend.map((d: any) => d.cost)
+  const {
+    today,
+    all_time: allTime,
+    by_model: byModel,
+    daily_trend: dailyTrend,
+    top_sessions: topSessions = [],
+    trend_summary: trendSummary = {},
+  } = data
+  const costValues = dailyTrend.map((d: any) => d.billed_cost_usd ?? d.cost)
 
   // Compute cost breakdown across all models
   let totalInputCost = 0, totalOutputCost = 0, totalCacheRCost = 0, totalCacheWCost = 0
@@ -82,27 +120,27 @@ export default function TokenCostsPanel() {
   return (
     <>
       {/* Today */}
-      <Panel title={`${t('tokenCosts.today')} — $${today.estimated_cost_usd.toFixed(2)}`}>
+      <Panel title={`${t('tokenCosts.today')} — ${money(today.billed_cost_usd ?? today.estimated_cost_usd)}`}>
         <div className="grid grid-cols-2 gap-3 mb-3">
           <StatCard value={today.session_count} label={t('tokenCosts.sessions')} />
           <StatCard value={today.message_count} label={t('tokenCosts.messages')} />
         </div>
         <div className="text-[13px] space-y-1">
-          <div className="flex justify-between"><span style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.input')}</span><span>{formatTokens(today.input_tokens)}</span></div>
-          <div className="flex justify-between"><span style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.output')}</span><span>{formatTokens(today.output_tokens)}</span></div>
-          <div className="flex justify-between"><span style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.cacheRead')}</span><span>{formatTokens(today.cache_read_tokens)}</span></div>
-          <div className="flex justify-between font-bold pt-1" style={{ borderTop: '1px solid var(--hud-border)' }}>
-            <span>{t('tokenCosts.total')}</span><span>{formatTokens(today.total_tokens)}</span>
+          <DetailRow label={t('tokenCosts.input')} value={formatTokens(today.input_tokens)} />
+          <DetailRow label={t('tokenCosts.output')} value={formatTokens(today.output_tokens)} />
+          <DetailRow label={t('tokenCosts.cacheRead')} value={formatTokens(today.cache_read_tokens)} />
+          <div className="font-bold pt-1" style={{ borderTop: '1px solid var(--hud-border)' }}>
+            <DetailRow label={t('tokenCosts.total')} value={formatTokens(today.total_tokens)} />
           </div>
         </div>
         <div className="mt-3 text-[20px] font-bold text-center" style={{ color: 'var(--hud-accent)' }}>
-          ${today.estimated_cost_usd.toFixed(2)}
+          {money(today.billed_cost_usd ?? today.estimated_cost_usd)}
         </div>
-        <div className="text-[13px] text-center" style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.estimatedToday')}</div>
+        <div className="text-[13px] text-center" style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.billedToday')}</div>
       </Panel>
 
       {/* All time */}
-      <Panel title={`${t('tokenCosts.total')} — $${allTime.estimated_cost_usd.toFixed(2)}`}>
+      <Panel title={`${t('tokenCosts.total')} — ${money(allTime.billed_cost_usd ?? allTime.estimated_cost_usd)}`}>
         <div className="grid grid-cols-2 gap-3 mb-3">
           <StatCard value={allTime.session_count} label={t('tokenCosts.sessions')} />
           <StatCard value={(allTime.message_count || 0).toLocaleString()} label={t('tokenCosts.messages')} />
@@ -110,21 +148,76 @@ export default function TokenCostsPanel() {
           <StatCard value={(allTime.tool_call_count || 0).toLocaleString()} label={t('tokenCosts.toolCalls')} />
         </div>
 
+        <div className="text-[13px] space-y-0.5 mt-2 pt-2" style={{ borderTop: '1px solid var(--hud-border)' }}>
+          <DetailRow label={t('tokenCosts.estimated')} value={money(allTime.estimated_cost_usd)} />
+          <DetailRow label={t('tokenCosts.actual')} value={`${money(allTime.actual_cost_usd)} · ${allTime.actual_coverage_pct || 0}%`} />
+          <DetailRow label={t('tokenCosts.delta')} value={<DeltaBadge value={allTime.actual_delta_usd || 0} pct={allTime.actual_delta_pct} />} />
+          <DetailRow label={t('tokenCosts.cacheSaved')} value={money(allTime.cache_savings_usd)} tone="var(--hud-success)" />
+        </div>
+
         {/* Cost by type */}
         <div className="text-[13px] space-y-0.5 mt-2 pt-2" style={{ borderTop: '1px solid var(--hud-border)' }}>
-          <div className="flex justify-between"><span style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.inputCost')}</span><span style={{ color: 'var(--hud-primary)' }}>${totalInputCost.toFixed(2)}</span></div>
-          <div className="flex justify-between"><span style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.outputCost')}</span><span style={{ color: 'var(--hud-accent)' }}>${totalOutputCost.toFixed(2)}</span></div>
-          <div className="flex justify-between"><span style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.cacheRead')}</span><span style={{ color: 'var(--hud-success)' }}>${totalCacheRCost.toFixed(2)}</span></div>
-          <div className="flex justify-between"><span style={{ color: 'var(--hud-text-dim)' }}>{t('tokenCosts.cacheWrite')}</span><span style={{ color: 'var(--hud-warning)' }}>${totalCacheWCost.toFixed(2)}</span></div>
+          <DetailRow label={t('tokenCosts.inputCost')} value={money(totalInputCost)} tone="var(--hud-primary)" />
+          <DetailRow label={t('tokenCosts.outputCost')} value={money(totalOutputCost)} tone="var(--hud-accent)" />
+          <DetailRow label={t('tokenCosts.cacheRead')} value={money(totalCacheRCost)} tone="var(--hud-success)" />
+          <DetailRow label={t('tokenCosts.cacheWrite')} value={money(totalCacheWCost)} tone="var(--hud-warning)" />
         </div>
 
         <div className="mt-3 text-[20px] font-bold text-center" style={{ color: 'var(--hud-accent)' }}>
-          ${allTime.estimated_cost_usd.toFixed(2)}
+          {money(allTime.billed_cost_usd ?? allTime.estimated_cost_usd)}
         </div>
         <div className="text-[13px] text-center" style={{ color: 'var(--hud-text-dim)' }}>
-          {t('tokenCosts.estimatedAllTime')} ({byModel.length} {t('tokenCosts.models')})
+          {t('tokenCosts.billedAllTime')} ({byModel.length} {t('tokenCosts.models')})
         </div>
       </Panel>
+
+      {/* Trend summary */}
+      <Panel title={t('tokenCosts.trend')}>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <StatCard value={money(trendSummary.recent_7d_cost_usd)} label={t('tokenCosts.last7Days')} />
+          <StatCard value={money(trendSummary.previous_7d_cost_usd)} label={t('tokenCosts.prev7Days')} />
+        </div>
+        <div className="text-[13px] space-y-1">
+          <DetailRow label={t('tokenCosts.change')} value={<DeltaBadge value={trendSummary.delta_usd || 0} pct={trendSummary.delta_pct} />} />
+          <DetailRow label={t('tokenCosts.cacheSaved')} value={money(allTime.cache_savings_usd)} tone="var(--hud-success)" />
+          <DetailRow label={t('tokenCosts.actualCoverage')} value={`${allTime.actual_coverage_pct || 0}%`} />
+        </div>
+      </Panel>
+
+      {/* Top sessions */}
+      {topSessions.length > 0 && (
+        <Panel title={t('tokenCosts.topSessions')} className="col-span-full">
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead style={{ color: 'var(--hud-text-dim)' }}>
+                <tr className="text-left" style={{ borderBottom: '1px solid var(--hud-border)' }}>
+                  <th className="py-2 pr-3 font-normal">{t('tokenCosts.session')}</th>
+                  <th className="py-2 pr-3 font-normal">{t('tokenCosts.model')}</th>
+                  <th className="py-2 pr-3 font-normal text-right">{t('tokenCosts.tokens')}</th>
+                  <th className="py-2 pr-3 font-normal text-right">{t('tokenCosts.estimated')}</th>
+                  <th className="py-2 pr-3 font-normal text-right">{t('tokenCosts.actual')}</th>
+                  <th className="py-2 font-normal text-right">{t('tokenCosts.billed')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topSessions.map((s: any) => (
+                  <tr key={s.id} style={{ borderBottom: '1px solid var(--hud-border)' }}>
+                    <td className="py-2 pr-3 max-w-[260px]">
+                      <div className="truncate" style={{ color: 'var(--hud-primary)' }}>{s.title || s.id}</div>
+                      <div style={{ color: 'var(--hud-text-dim)' }}>{s.date} · {s.source}</div>
+                    </td>
+                    <td className="py-2 pr-3">{s.model}</td>
+                    <td className="py-2 pr-3 text-right">{formatTokens(s.total_tokens)}</td>
+                    <td className="py-2 pr-3 text-right">{money(s.estimated_cost_usd)}</td>
+                    <td className="py-2 pr-3 text-right">{s.actual_cost_usd > 0 ? money(s.actual_cost_usd) : '—'}</td>
+                    <td className="py-2 text-right font-bold" style={{ color: 'var(--hud-accent)' }}>{money(s.billed_cost_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
 
       {/* Per-model breakdown */}
       {byModel.length > 0 && (
@@ -150,7 +243,7 @@ export default function TokenCostsPanel() {
             {dailyTrend.slice(-10).map((d: any) => (
               <div key={d.date} className="text-center py-1" style={{ background: 'var(--hud-bg-panel)' }}>
                 <div style={{ color: 'var(--hud-text-dim)' }}>{d.date.slice(5)}</div>
-                <div style={{ color: 'var(--hud-accent)' }}>${d.cost.toFixed(2)}</div>
+                <div style={{ color: 'var(--hud-accent)' }}>{money(d.billed_cost_usd ?? d.cost)}</div>
                 <div className="text-[13px]">{formatTokens(d.tokens)}</div>
               </div>
             ))}

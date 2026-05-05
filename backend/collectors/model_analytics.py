@@ -11,7 +11,7 @@ from typing import Optional
 
 from ..cache import get_cached_or_compute
 from .model_info import _lookup_model, _read_models_cache
-from .models import ModelAnalyticsState, ModelUsage
+from .models import ModelAnalyticsState, ModelSessionUsage, ModelUsage
 from .utils import default_hermes_dir, safe_get
 
 
@@ -57,6 +57,43 @@ def _capabilities(cache: dict, provider: str, model: str) -> dict:
     }
 
 
+def _timestamp_to_datetime(value) -> Optional[datetime]:
+    if value is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(value))
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def _int_from_row(row: sqlite3.Row, key: str) -> int:
+    return int(safe_get(row, key, 0) or 0)
+
+
+def _float_from_row(row: sqlite3.Row, key: str) -> float:
+    return float(safe_get(row, key, 0.0) or 0.0)
+
+
+def _session_from_row(row: sqlite3.Row) -> ModelSessionUsage:
+    return ModelSessionUsage(
+        id=str(safe_get(row, "id") or ""),
+        title=str(safe_get(row, "title") or ""),
+        source=str(safe_get(row, "source") or ""),
+        started_at=_timestamp_to_datetime(safe_get(row, "started_at")),
+        ended_at=_timestamp_to_datetime(safe_get(row, "ended_at")),
+        messages=_int_from_row(row, "message_count"),
+        api_calls=_int_from_row(row, "api_call_count"),
+        tool_calls=_int_from_row(row, "tool_call_count"),
+        input_tokens=_int_from_row(row, "input_tokens"),
+        output_tokens=_int_from_row(row, "output_tokens"),
+        cache_read_tokens=_int_from_row(row, "cache_read_tokens"),
+        cache_write_tokens=_int_from_row(row, "cache_write_tokens"),
+        reasoning_tokens=_int_from_row(row, "reasoning_tokens"),
+        estimated_cost_usd=round(_float_from_row(row, "estimated_cost_usd"), 6),
+        actual_cost_usd=round(_float_from_row(row, "actual_cost_usd"), 6),
+    )
+
+
 def _do_collect(hermes_path: Path, days: Optional[int]) -> ModelAnalyticsState:
     db_path = hermes_path / "state.db"
     if not db_path.exists():
@@ -79,6 +116,8 @@ def _do_collect(hermes_path: Path, days: Optional[int]) -> ModelAnalyticsState:
                    input_tokens, output_tokens, cache_read_tokens,
                    cache_write_tokens, reasoning_tokens, estimated_cost_usd,
                    model_config,
+                   {title},
+                   {ended_at},
                    {model},
                    {billing_provider},
                    {actual_cost_usd},
@@ -87,6 +126,8 @@ def _do_collect(hermes_path: Path, days: Optional[int]) -> ModelAnalyticsState:
             WHERE LOWER(COALESCE(source, '')) != 'tool'
               {cutoff_clause}
             """.format(
+                title=_optional_column(columns, "title", "''"),
+                ended_at=_optional_column(columns, "ended_at"),
                 model=_optional_column(columns, "model"),
                 billing_provider=_optional_column(columns, "billing_provider"),
                 actual_cost_usd=_optional_column(columns, "actual_cost_usd", "0"),
@@ -104,31 +145,35 @@ def _do_collect(hermes_path: Path, days: Optional[int]) -> ModelAnalyticsState:
         model, provider = _model_from_row(row)
         key = (model, provider)
         usage = models.setdefault(key, ModelUsage(model=model, provider=provider))
+        usage.session_details.append(_session_from_row(row))
         usage.sessions += 1
-        usage.messages += int(safe_get(row, "message_count", 0) or 0)
-        usage.tool_calls += int(safe_get(row, "tool_call_count", 0) or 0)
-        usage.api_calls += int(safe_get(row, "api_call_count", 0) or 0)
-        usage.input_tokens += int(safe_get(row, "input_tokens", 0) or 0)
-        usage.output_tokens += int(safe_get(row, "output_tokens", 0) or 0)
-        usage.cache_read_tokens += int(safe_get(row, "cache_read_tokens", 0) or 0)
-        usage.cache_write_tokens += int(safe_get(row, "cache_write_tokens", 0) or 0)
-        usage.reasoning_tokens += int(safe_get(row, "reasoning_tokens", 0) or 0)
+        usage.messages += _int_from_row(row, "message_count")
+        usage.tool_calls += _int_from_row(row, "tool_call_count")
+        usage.api_calls += _int_from_row(row, "api_call_count")
+        usage.input_tokens += _int_from_row(row, "input_tokens")
+        usage.output_tokens += _int_from_row(row, "output_tokens")
+        usage.cache_read_tokens += _int_from_row(row, "cache_read_tokens")
+        usage.cache_write_tokens += _int_from_row(row, "cache_write_tokens")
+        usage.reasoning_tokens += _int_from_row(row, "reasoning_tokens")
         usage.estimated_cost_usd = round(
-            usage.estimated_cost_usd + float(safe_get(row, "estimated_cost_usd", 0.0) or 0.0),
+            usage.estimated_cost_usd + _float_from_row(row, "estimated_cost_usd"),
             6,
         )
         usage.actual_cost_usd = round(
-            usage.actual_cost_usd + float(safe_get(row, "actual_cost_usd", 0.0) or 0.0),
+            usage.actual_cost_usd + _float_from_row(row, "actual_cost_usd"),
             6,
         )
-        started = safe_get(row, "started_at")
+        started = _timestamp_to_datetime(safe_get(row, "started_at"))
         if started:
-            dt = datetime.fromtimestamp(started)
-            if usage.last_used_at is None or dt > usage.last_used_at:
-                usage.last_used_at = dt
+            if usage.last_used_at is None or started > usage.last_used_at:
+                usage.last_used_at = started
 
     cache = _read_models_cache(hermes_path)
     for usage in models.values():
+        usage.session_details.sort(
+            key=lambda session: session.started_at or datetime.min,
+            reverse=True,
+        )
         caps = _capabilities(cache, usage.provider, usage.model)
         for key, value in caps.items():
             setattr(usage, key, value)

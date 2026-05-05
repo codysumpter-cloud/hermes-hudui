@@ -377,6 +377,11 @@ def _feature_diag(
     )
 
 
+def _sort_diagnostics(items: list[DiagnosticStatus]) -> list[DiagnosticStatus]:
+    severity_rank = {"broken": 0, "warning": 1, "ok": 2}
+    return sorted(items, key=lambda item: (severity_rank.get(item.status, 3), item.name.lower()))
+
+
 def collect_health(hermes_dir: str | None = None) -> HealthState:
     """Collect health status."""
     if hermes_dir is None:
@@ -594,5 +599,10 @@ def collect_health(hermes_dir: str | None = None) -> HealthState:
             actions=[HealthAction(name="Open Cron", kind="tab", target="cron"), HealthAction(name="Recheck", kind="refresh")],
         ),
     ])
+
+    state.readiness = _sort_diagnostics(state.readiness)
+    state.freshness = _sort_diagnostics(state.freshness)
+    state.database = _sort_diagnostics(state.database)
+    state.features = _sort_diagnostics(state.features)
 
     return state

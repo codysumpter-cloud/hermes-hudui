@@ -137,3 +137,18 @@ def test_health_reports_schema_drift_and_missing_inputs(tmp_path: Path, monkeypa
 
     assert state.hermes_cli_status == "broken"
     assert state.diagnostics_broken >= 1
+
+
+def test_health_diagnostics_are_sorted_by_severity(tmp_path: Path, monkeypatch) -> None:
+    _make_state_db(tmp_path / "state.db", include_messages=False)
+
+    monkeypatch.setattr("backend.collectors.health._check_pid_file", lambda *args, **kwargs: None)
+    monkeypatch.setattr("backend.collectors.health._check_systemd_service", lambda *args, **kwargs: None)
+    monkeypatch.setattr("backend.collectors.health._check_process", lambda *args, **kwargs: None)
+    monkeypatch.setattr("backend.collectors.health._hermes_cli_info", lambda: ("broken", "", "hermes CLI not found"))
+
+    state = collect_health(str(tmp_path))
+
+    for items in (state.readiness, state.freshness, state.database, state.features):
+        severities = [item.status for item in items]
+        assert severities == sorted(severities, key={"broken": 0, "warning": 1, "ok": 2}.get)

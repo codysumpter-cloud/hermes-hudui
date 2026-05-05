@@ -134,6 +134,31 @@ def collect_managed_tools(
         section = section if isinstance(section, dict) else {}
         use_gateway = _truthy(section.get("use_gateway"))
         configured_env = [name for name in item["direct_env_vars"] if env.get(name)]
+        has_direct_credential = bool(configured_env)
+        config_section = str(item["section"])
+        direct_missing_label = f"direct {item['direct_label']}"
+        missing_config: list[str] = []
+        diagnostics = [
+            f"Gateway opt-in {'enabled' if use_gateway else 'disabled'} in {config_section}.use_gateway.",
+        ]
+        safe_actions: list[str] = []
+
+        if use_gateway:
+            diagnostics.append(
+                "Nous Portal auth is present." if nous_auth_present else "Nous Portal auth is missing."
+            )
+            safe_actions.append("gateway-restart")
+            if not nous_auth_present:
+                missing_config.append("Nous Portal auth")
+        else:
+            missing_config.append(f"{config_section}.use_gateway: true")
+
+        if has_direct_credential:
+            diagnostics.append(f"Direct credential configured: {configured_env[0]}.")
+        else:
+            diagnostics.append("No direct credential detected.")
+            if not use_gateway or not nous_auth_present:
+                missing_config.append(direct_missing_label)
 
         if use_gateway and nous_auth_present:
             route = "managed"
@@ -159,8 +184,14 @@ def collect_managed_tools(
                 enabled=available,
                 available=available,
                 route=route,
+                config_section=config_section,
+                gateway_enabled=use_gateway,
+                has_direct_credential=has_direct_credential,
                 direct_env_vars=list(item["direct_env_vars"]),
                 configured_env_vars=configured_env,
+                missing_config=missing_config if not available else [],
+                diagnostics=diagnostics,
+                safe_actions=safe_actions,
                 reason=reason,
             )
         )

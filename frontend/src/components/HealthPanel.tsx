@@ -23,6 +23,8 @@ type DiagnosticStatus = {
   actions?: HealthAction[]
 }
 
+type SeverityFilter = 'all' | 'broken' | 'warning'
+
 const STATUS_COLOR = {
   ok: 'var(--hud-success)',
   warning: 'var(--hud-warning)',
@@ -40,18 +42,21 @@ function DiagnosticList({
   items,
   onAction,
   actionStatus,
+  filter,
 }: {
   items: DiagnosticStatus[]
   onAction: (action: HealthAction) => void
   actionStatus: string | null
+  filter: SeverityFilter
 }) {
   const [expanded, setExpanded] = useState<string | null>(null)
-  if (!items.length) {
+  const visibleItems = items.filter((item) => filter === 'all' || item.status === filter)
+  if (!visibleItems.length) {
     return <div className="text-[13px]" style={{ color: 'var(--hud-text-dim)' }}>-</div>
   }
   return (
     <div className="space-y-2">
-      {items.map((item) => (
+      {visibleItems.map((item) => (
         <div key={item.name} className="py-1.5" style={{ borderBottom: '1px solid var(--hud-border)' }}>
           <button
             type="button"
@@ -116,6 +121,7 @@ export default function HealthPanel() {
   const { t } = useTranslation()
   const { data, isLoading, mutate } = useApi('/health', 30000)
   const [actionStatus, setActionStatus] = useState<string | null>(null)
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
 
   // Only show loading on initial load
   if (isLoading && !data) {
@@ -174,22 +180,43 @@ export default function HealthPanel() {
           <div><span style={{ color: 'var(--hud-text-dim)' }}>{t('health.path')}:</span> {data.hermes_cli_path || '-'}</div>
           <div><span style={{ color: 'var(--hud-text-dim)' }}>{t('health.lastSession')}:</span> {data.last_session_at ? timeAgo(data.last_session_at) : '-'}</div>
         </div>
+        <div className="mt-3 flex flex-wrap gap-1">
+          {[
+            ['all', t('health.filterAll')],
+            ['broken', t('health.filterBroken')],
+            ['warning', t('health.filterWarnings')],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className="px-2 py-1 text-[11px] border"
+              style={{
+                borderColor: severityFilter === value ? 'var(--hud-primary)' : 'var(--hud-border)',
+                color: severityFilter === value ? 'var(--hud-primary)' : 'var(--hud-text-dim)',
+                background: severityFilter === value ? 'var(--hud-panel-alt, transparent)' : 'transparent',
+              }}
+              onClick={() => setSeverityFilter(value as SeverityFilter)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </Panel>
 
       <Panel title={t('health.features')} className="col-span-full">
-        <DiagnosticList items={features} onAction={runAction} actionStatus={actionStatus} />
+        <DiagnosticList items={features} onAction={runAction} actionStatus={actionStatus} filter={severityFilter} />
       </Panel>
 
       <Panel title={t('health.readiness')} className="col-span-1">
-        <DiagnosticList items={readiness} onAction={runAction} actionStatus={actionStatus} />
+        <DiagnosticList items={readiness} onAction={runAction} actionStatus={actionStatus} filter={severityFilter} />
       </Panel>
 
       <Panel title={t('health.freshness')} className="col-span-1">
-        <DiagnosticList items={freshness} onAction={runAction} actionStatus={actionStatus} />
+        <DiagnosticList items={freshness} onAction={runAction} actionStatus={actionStatus} filter={severityFilter} />
       </Panel>
 
       <Panel title={t('health.database')} className="col-span-full">
-        <DiagnosticList items={database} onAction={runAction} actionStatus={actionStatus} />
+        <DiagnosticList items={database} onAction={runAction} actionStatus={actionStatus} filter={severityFilter} />
       </Panel>
 
       <Panel title={t('health.apiKeys')} className="col-span-1">
