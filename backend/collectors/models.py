@@ -77,6 +77,57 @@ class SkillsState:
         return sorted(self.skills, key=lambda s: s.modified_at, reverse=True)[:n]
 
 
+# ── Plugins ─────────────────────────────────────────────────
+
+@dataclass
+class PluginInfo:
+    name: str
+    label: str
+    description: str
+    version: str
+    source: str  # user, bundled, project
+    path: str
+    runtime_status: str = "inactive"  # enabled, disabled, inactive
+    has_dashboard_manifest: bool = False
+    has_api: bool = False
+    user_hidden: bool = False
+    entry: str = ""
+    css: Optional[str] = None
+    icon: str = "Puzzle"
+    tab_path: str = ""
+    tab_position: str = "end"
+    slots: list[str] = field(default_factory=list)
+    provides_tools: list[str] = field(default_factory=list)
+    auth_required: bool = False
+    auth_command: str = ""
+    can_update_git: bool = False
+
+
+@dataclass
+class PluginsState:
+    plugins: list[PluginInfo] = field(default_factory=list)
+    orphan_dashboard_plugins: list[PluginInfo] = field(default_factory=list)
+
+    @property
+    def total_plugins(self) -> int:
+        return len(self.plugins)
+
+    @property
+    def dashboard_count(self) -> int:
+        return sum(1 for p in self.plugins if p.has_dashboard_manifest)
+
+    @property
+    def agent_count(self) -> int:
+        return sum(1 for p in self.plugins if p.provides_tools or p.runtime_status != "inactive")
+
+    @property
+    def hidden_count(self) -> int:
+        return sum(1 for p in self.plugins if p.user_hidden)
+
+    def by_source(self) -> dict[str, int]:
+        return dict(Counter(p.source for p in self.plugins))
+
+
 # ── Sessions ────────────────────────────────────────────────
 
 @dataclass
