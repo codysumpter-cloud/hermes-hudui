@@ -4,6 +4,7 @@ import { mutate } from 'swr'
 interface WebSocketMessage {
   type: 'data_changed' | 'cache_invalidate' | 'connected' | 'disconnected'
   data_types?: string[]
+  data_type?: string
   keys?: string[]
   paths?: string[]
 }
@@ -17,6 +18,8 @@ interface UseWebSocketReturn {
 }
 
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+const HEALTH_DEBOUNCE_MS = 750
+const HEALTH_MIN_REFRESH_MS = 3000
 
 export function useWebSocket(): UseWebSocketReturn {
   const [status, setStatus] = useState<WebSocketStatus>('disconnected')
@@ -24,6 +27,35 @@ export function useWebSocket(): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectAttemptsRef = useRef(0)
+  const healthRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastHealthRefreshRef = useRef(0)
+
+  const revalidateHealth = useCallback(() => {
+    if (document.visibilityState === 'hidden') return
+
+    const now = Date.now()
+    const elapsed = now - lastHealthRefreshRef.current
+    const delay = elapsed >= HEALTH_MIN_REFRESH_MS
+      ? HEALTH_DEBOUNCE_MS
+      : HEALTH_MIN_REFRESH_MS - elapsed
+
+    if (healthRefreshTimeoutRef.current) {
+      clearTimeout(healthRefreshTimeoutRef.current)
+    }
+
+    healthRefreshTimeoutRef.current = setTimeout(() => {
+      lastHealthRefreshRef.current = Date.now()
+      mutate(
+        (key) => typeof key === 'string' && key.startsWith('/api/health'),
+        undefined,
+        {
+          revalidate: true,
+          rollbackOnError: true,
+          populateCache: true,
+        }
+      )
+    }, delay)
+  }, [])
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -48,7 +80,10 @@ export function useWebSocket(): UseWebSocketReturn {
         setLastMessage(data)
 
         // Handle data change notifications
-        if (data.type === 'data_changed' && data.data_types) {
+        if (data.type === 'data_changed') {
+          const changedTypes = data.data_types || (data.data_type ? [data.data_type] : [])
+          if (!changedTypes.length) return
+
           // Map data types to API paths and trigger SWR revalidation
           const typeToPath: Record<string, string> = {
             sessions: '/sessions',
@@ -59,15 +94,23 @@ export function useWebSocket(): UseWebSocketReturn {
             profiles: '/profiles',
             cron: '/cron',
             projects: '/projects',
-            health: '/health',
             corrections: '/corrections',
             state: '/state',
             timeline: '/timeline',
             snapshots: '/snapshots',
+            gateway: '/gateway',
+            plugins: '/plugins',
+            'model-info': '/model-info',
           }
 
+          const healthTypes = new Set(['health', 'config', 'gateway', 'plugins', 'model-info'])
+
           // Silently revalidate matching SWR keys (keep stale data, update in background)
-          data.data_types.forEach((dataType) => {
+          changedTypes.forEach((dataType) => {
+            if (healthTypes.has(dataType)) {
+              revalidateHealth()
+            }
+
             const path = typeToPath[dataType]
             if (path) {
               mutate(
@@ -114,7 +157,7 @@ export function useWebSocket(): UseWebSocketReturn {
     ws.onerror = () => {
       setStatus('error')
     }
-  }, [])
+  }, [revalidateHealth])
 
   const sendMessage = useCallback((data: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -136,6 +179,9 @@ export function useWebSocket(): UseWebSocketReturn {
       clearInterval(heartbeat)
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
+      }
+      if (healthRefreshTimeoutRef.current) {
+        clearTimeout(healthRefreshTimeoutRef.current)
       }
       wsRef.current?.close()
     }
