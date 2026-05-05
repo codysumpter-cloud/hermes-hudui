@@ -528,3 +528,67 @@ class ModelCapabilities:
     release_date: str = ""
     knowledge_cutoff: str = ""
     found: bool = False
+
+
+@dataclass
+class ModelUsage:
+    model: str
+    provider: str = ""
+    sessions: int = 0
+    messages: int = 0
+    api_calls: int = 0
+    tool_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    actual_cost_usd: float = 0.0
+    last_used_at: Optional[datetime] = None
+    supports_tools: bool = False
+    supports_vision: bool = False
+    supports_reasoning: bool = False
+    supports_structured_output: bool = False
+    context_window: int = 0
+    max_output_tokens: int = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+            + self.reasoning_tokens
+        )
+
+    @property
+    def avg_tokens_per_session(self) -> int:
+        return round(self.total_tokens / self.sessions) if self.sessions else 0
+
+
+@dataclass
+class ModelAnalyticsState:
+    models: list[ModelUsage] = field(default_factory=list)
+    period_days: Optional[int] = 30
+
+    @property
+    def total_models(self) -> int:
+        return len(self.models)
+
+    @property
+    def total_sessions(self) -> int:
+        return sum(m.sessions for m in self.models)
+
+    @property
+    def total_tokens(self) -> int:
+        return sum(m.total_tokens for m in self.models)
+
+    @property
+    def total_estimated_cost_usd(self) -> float:
+        return round(sum(m.estimated_cost_usd for m in self.models), 6)
+
+    @property
+    def total_actual_cost_usd(self) -> float:
+        return round(sum(m.actual_cost_usd for m in self.models), 6)

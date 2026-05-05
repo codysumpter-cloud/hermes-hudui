@@ -1,6 +1,6 @@
 import { useApi } from '../hooks/useApi'
 import Panel from './Panel'
-import { formatTokens } from '../lib/utils'
+import { formatTokens, timeAgo } from '../lib/utils'
 import { useTranslation } from '../i18n'
 
 interface ModelInfo {
@@ -23,6 +23,41 @@ interface ModelInfo {
   found: boolean
 }
 
+interface ModelUsage {
+  model: string
+  provider: string
+  sessions: number
+  messages: number
+  api_calls: number
+  tool_calls: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
+  estimated_cost_usd: number
+  actual_cost_usd: number
+  last_used_at: string | null
+  supports_tools: boolean
+  supports_vision: boolean
+  supports_reasoning: boolean
+  supports_structured_output: boolean
+  context_window: number
+  max_output_tokens: number
+  total_tokens: number
+  avg_tokens_per_session: number
+}
+
+interface ModelAnalytics {
+  models: ModelUsage[]
+  period_days: number | null
+  total_models: number
+  total_sessions: number
+  total_tokens: number
+  total_estimated_cost_usd: number
+  total_actual_cost_usd: number
+}
+
 function CapBadge({ active, label }: { active: boolean; label: string }) {
   return (
     <span
@@ -40,9 +75,14 @@ function CapBadge({ active, label }: { active: boolean; label: string }) {
   )
 }
 
+function Money({ value }: { value: number }) {
+  return <span>${value.toFixed(value >= 1 ? 2 : 4)}</span>
+}
+
 export default function ModelInfoPanel() {
   const { t } = useTranslation()
   const { data, isLoading } = useApi<ModelInfo>('/model-info', 30000)
+  const { data: analytics } = useApi<ModelAnalytics>('/model-analytics?days=30', 30000)
 
   if (isLoading && !data) {
     return (
@@ -149,6 +189,90 @@ export default function ModelInfoPanel() {
             {costRow(t('modelInfo.costOutput'), data.cost_output_per_m)}
             {costRow(t('modelInfo.costCacheRead'), data.cost_cache_read_per_m)}
           </div>
+        )}
+      </Panel>
+
+      <Panel title={t('modelInfo.usage')} className="col-span-full">
+        {!analytics || analytics.models.length === 0 ? (
+          <div className="text-[13px]" style={{ color: 'var(--hud-text-dim)' }}>
+            {t('modelInfo.noUsage')}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+              {[
+                [t('modelInfo.models'), analytics.total_models],
+                [t('modelInfo.sessions'), analytics.total_sessions],
+                [t('modelInfo.tokens'), formatTokens(analytics.total_tokens)],
+                [t('modelInfo.estimated'), `$${analytics.total_estimated_cost_usd.toFixed(2)}`],
+                [t('modelInfo.actual'), `$${analytics.total_actual_cost_usd.toFixed(2)}`],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="p-2 border" style={{ borderColor: 'var(--hud-border)' }}>
+                  <div className="text-[11px] uppercase tracking-widest" style={{ color: 'var(--hud-text-dim)' }}>{label}</div>
+                  <div className="text-[15px] font-bold" style={{ color: 'var(--hud-primary)' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr style={{ color: 'var(--hud-text-dim)', borderBottom: '1px solid var(--hud-border)' }}>
+                    <th className="text-left py-2 pr-3">{t('modelInfo.model')}</th>
+                    <th className="text-left py-2 pr-3">{t('modelInfo.provider')}</th>
+                    <th className="text-right py-2 pr-3">{t('modelInfo.sessions')}</th>
+                    <th className="text-right py-2 pr-3">{t('modelInfo.tokens')}</th>
+                    <th className="text-right py-2 pr-3">{t('modelInfo.avg')}</th>
+                    <th className="text-right py-2 pr-3">{t('modelInfo.apiCalls')}</th>
+                    <th className="text-right py-2 pr-3">{t('modelInfo.toolCalls')}</th>
+                    <th className="text-right py-2 pr-3">{t('modelInfo.lastUsed')}</th>
+                    <th className="text-right py-2 pr-3">{t('modelInfo.cost')}</th>
+                    <th className="text-left py-2">{t('modelInfo.capabilities')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analytics.models.map((model) => (
+                    <tr key={`${model.provider}:${model.model}`} style={{ borderBottom: '1px solid var(--hud-border)' }}>
+                      <td className="py-2 pr-3 font-mono" style={{ color: 'var(--hud-text)' }}>{model.model}</td>
+                      <td className="py-2 pr-3" style={{ color: 'var(--hud-text-dim)' }}>{model.provider || '—'}</td>
+                      <td className="py-2 pr-3 text-right">{model.sessions}</td>
+                      <td className="py-2 pr-3 text-right">
+                        <div>{formatTokens(model.total_tokens)}</div>
+                        <div className="text-[10px]" style={{ color: 'var(--hud-text-dim)' }}>
+                          I {formatTokens(model.input_tokens)} / O {formatTokens(model.output_tokens)}
+                          {(model.cache_read_tokens || model.cache_write_tokens || model.reasoning_tokens) ? (
+                            <>
+                              {' '} / C {formatTokens(model.cache_read_tokens + model.cache_write_tokens)}
+                              {' '} / R {formatTokens(model.reasoning_tokens)}
+                            </>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="py-2 pr-3 text-right">{formatTokens(model.avg_tokens_per_session)}</td>
+                      <td className="py-2 pr-3 text-right">{model.api_calls}</td>
+                      <td className="py-2 pr-3 text-right">{model.tool_calls}</td>
+                      <td className="py-2 pr-3 text-right whitespace-nowrap">
+                        {model.last_used_at ? timeAgo(model.last_used_at) : '-'}
+                      </td>
+                      <td className="py-2 pr-3 text-right">
+                        <div>A <Money value={model.actual_cost_usd} /></div>
+                        <div className="text-[10px]" style={{ color: 'var(--hud-text-dim)' }}>
+                          E <Money value={model.estimated_cost_usd} />
+                        </div>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex flex-wrap gap-1">
+                          <CapBadge active={model.supports_tools} label={t('modelInfo.tools')} />
+                          <CapBadge active={model.supports_vision} label={t('modelInfo.vision')} />
+                          <CapBadge active={model.supports_reasoning} label={t('modelInfo.reasoning')} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Panel>
     </>
