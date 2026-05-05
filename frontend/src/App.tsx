@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { ThemeProvider } from './hooks/useTheme'
 import { useWebSocket } from './hooks/useWebSocket'
 import TopBar, { type TabId, TABS } from './components/TopBar'
@@ -101,6 +101,18 @@ export default function App() {
 
   const handleCommandSelect = useCallback((id: string) => {
     setActiveTab(id as TabId)
+  }, [])
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: string }>).detail
+      const tab = detail?.tab as TabId | undefined
+      if (tab && TABS.some(item => item.id === tab)) {
+        setActiveTab(tab)
+      }
+    }
+    window.addEventListener('hud:navigate', handler)
+    return () => window.removeEventListener('hud:navigate', handler)
   }, [])
 
   return (
