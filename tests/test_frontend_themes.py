@@ -15,4 +15,6 @@ def test_hermes_official_theme_is_registered_and_styled() -> None:
     assert "--hud-bg-deep: #041c1c;" in css
     assert "--hud-primary: #ffe6cb;" in css
     assert "--hud-primary-glow: rgba(255, 189, 56, 0.35);" in css
+    assert "--hud-bg: var(--hud-bg-deep);" in css
+    assert "--hud-panel-alt: var(--hud-bg-surface);" in css
     assert "'theme.hermesOfficial': 'Hermes Teal'" in translations

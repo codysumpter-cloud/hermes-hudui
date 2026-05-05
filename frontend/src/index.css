@@ -11,6 +11,9 @@
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   font-feature-settings: 'kern' 1, 'liga' 1;
+  --hud-bg: var(--hud-bg-deep);
+  --hud-panel-alt: var(--hud-bg-surface);
+  --hud-on-primary: var(--hud-bg-deep);
 }
 
 /* ── Neural Awakening (default) ─────────────────────────── */
@@ -52,7 +55,7 @@
   --hud-border-bright: rgba(255, 230, 203, 0.32);
   --hud-success: #4ade80;
   --hud-warning: #ffbd38;
-  --hud-error: #fb2c36;
+  --hud-error: #ff7a82;
   --hud-gradient-start: #ffe6cb;
   --hud-gradient-end: #ffbd38;
 }
