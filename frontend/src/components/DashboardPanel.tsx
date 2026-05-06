@@ -2,6 +2,80 @@ import { useApi } from '../hooks/useApi'
 import Panel, { CapacityBar, Sparkline } from './Panel'
 import { useTranslation } from '../i18n'
 
+function money(value: number | null | undefined) {
+  return `$${(value || 0).toFixed(2)}`
+}
+
+function ExecutiveSummary({ summary }: { summary: any }) {
+  const { t } = useTranslation()
+  if (!summary) return null
+
+  const health = summary.health || {}
+  const spend = summary.spend || {}
+  const model = summary.model || {}
+  const risks = summary.risks || {}
+  const actions = summary.actions || []
+
+  const cards = [
+    {
+      label: t('dashboard.systemHealth'),
+      value: `${health.broken || 0} / ${health.warnings || 0}`,
+      meta: t('dashboard.brokenWarnings'),
+      color: health.broken ? 'var(--hud-error)' : health.warnings ? 'var(--hud-warning)' : 'var(--hud-success)',
+    },
+    {
+      label: t('dashboard.spendPulse'),
+      value: money(spend.today_usd),
+      meta: `${spend.trend_delta_usd >= 0 ? '+' : ''}${money(spend.trend_delta_usd)} ${t('dashboard.sevenDayDelta')}`,
+      color: spend.trend_delta_usd > 0 ? 'var(--hud-warning)' : 'var(--hud-success)',
+    },
+    {
+      label: t('dashboard.modelPulse'),
+      value: model.top_model || '-',
+      meta: `${model.top_provider || '-'} · ${(model.total_tokens || 0).toLocaleString()} ${t('dashboard.tokens')}`,
+      color: 'var(--hud-primary)',
+    },
+    {
+      label: t('dashboard.riskPulse'),
+      value: `${risks.provider_warnings || 0} / ${risks.gateway_unavailable_tools || 0}`,
+      meta: t('dashboard.providerGateway'),
+      color: (risks.provider_warnings || risks.gateway_unavailable_tools) ? 'var(--hud-warning)' : 'var(--hud-success)',
+    },
+  ]
+
+  return (
+    <Panel title={t('dashboard.executiveSummary')} className="col-span-full">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
+        {cards.map((card) => (
+          <div key={card.label} className="p-2 border" style={{ borderColor: 'var(--hud-border)' }}>
+            <div className="text-[11px] uppercase tracking-widest" style={{ color: 'var(--hud-text-dim)' }}>{card.label}</div>
+            <div className="text-[15px] font-bold truncate" style={{ color: card.color }}>{card.value}</div>
+            <div className="text-[11px] truncate" style={{ color: 'var(--hud-text-dim)' }}>{card.meta}</div>
+          </div>
+        ))}
+      </div>
+      {spend.top_session?.title && (
+        <div className="text-[12px] mb-2" style={{ color: 'var(--hud-text-dim)' }}>
+          {t('dashboard.topCostSession')}: <span style={{ color: 'var(--hud-text)' }}>{spend.top_session.title}</span> {money(spend.top_session.cost_usd)}
+        </div>
+      )}
+      <div className="text-[12px] space-y-1">
+        {actions.length === 0 ? (
+          <div style={{ color: 'var(--hud-success)' }}>{t('dashboard.noActionItems')}</div>
+        ) : actions.slice(0, 5).map((action: any) => (
+          <div key={`${action.source}:${action.label}`} className="flex items-center gap-2">
+            <span style={{ color: action.severity === 'broken' ? 'var(--hud-error)' : 'var(--hud-warning)' }}>
+              {action.severity === 'broken' ? '!' : '•'}
+            </span>
+            <span className="font-medium">{action.label}</span>
+            <span style={{ color: 'var(--hud-text-dim)' }}>{action.source}</span>
+          </div>
+        ))}
+      </div>
+    </Panel>
+  )
+}
+
 function IdentityBlock({ state, health }: { state: any; health: any }) {
   const { t } = useTranslation()
   const { config, sessions } = state
@@ -73,10 +147,15 @@ function WhatIKnow({ sessions, skills }: { sessions: any; skills: any }) {
   )
 }
 
-function WhatIRemember({ memory, user, corrections }: { memory: any; user: any; corrections: any }) {
+function WhatIRemember({ memory, user, corrections, sessions }: { memory: any; user: any; corrections: any; sessions: any }) {
   const { t } = useTranslation()
   const sev = corrections?.by_severity || {}
   const sevParts = []
+  const dr = sessions?.date_range
+  const days = dr?.[0] ? Math.floor((new Date(dr[1]).getTime() - new Date(dr[0]).getTime()) / 86400000) + 1 : 0
+  const totalMessages = sessions?.total_messages || 0
+  const totalCorrections = corrections?.total || 0
+
   if (sev.critical) sevParts.push(<span key="c" style={{ color: 'var(--hud-error)' }}>{sev.critical} {t('dashboard.critical')}</span>)
   if (sev.major) sevParts.push(<span key="m" style={{ color: 'var(--hud-warning)' }}>{sev.major} {t('dashboard.major')}</span>)
   if (sev.minor) sevParts.push(<span key="n" style={{ color: 'var(--hud-text-dim)' }}>{sev.minor} {t('dashboard.minor')}</span>)
@@ -96,6 +175,33 @@ function WhatIRemember({ memory, user, corrections }: { memory: any; user: any; 
           <span className="ml-1" style={{ color: 'var(--hud-text-dim)' }}>{t('dashboard.learnFromEvery')}</span>
         </div>
       )}
+      <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--hud-border)' }}>
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          {[
+            [t('dashboard.messages'), totalMessages.toLocaleString()],
+            [t('dashboard.days'), days.toLocaleString()],
+            [t('dashboard.correctedTimes'), totalCorrections.toLocaleString()],
+          ].map(([label, value]) => (
+            <div key={String(label)} className="px-2 py-1.5 border" style={{ borderColor: 'var(--hud-border)', background: 'var(--hud-bg-panel)' }}>
+              <div className="text-[10px] uppercase tracking-widest truncate" style={{ color: 'var(--hud-text-dim)' }}>{label}</div>
+              <div className="text-[14px] font-bold" style={{ color: 'var(--hud-primary)' }}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div
+          className="px-3 py-2 text-[13px] space-y-1"
+          style={{
+            borderLeft: '3px solid var(--hud-accent)',
+            background: 'var(--hud-panel-alt, rgba(0,0,0,0.18))',
+            color: 'var(--hud-primary)',
+          }}
+        >
+          <div>{t('dashboard.processedThoughts')} {totalMessages.toLocaleString()} {t('dashboard.thoughtsAcross')} {days} {t('dashboard.days')}</div>
+          <div>{t('dashboard.correctedTimes')} {totalCorrections} {t('dashboard.timesAndBetter')}</div>
+          <div style={{ color: 'var(--hud-primary-dim)' }}>{t('dashboard.doNotForget')}</div>
+          <div className="font-bold" style={{ color: 'var(--hud-accent)' }}>{t('dashboard.stillBecoming')}</div>
+        </div>
+      </div>
     </Panel>
   )
 }
@@ -340,23 +446,6 @@ function GrowthDelta({ snapshots }: { snapshots: any[] }) {
   )
 }
 
-function ClosingStatements({ sessions, corrections }: { sessions: any; corrections: any }) {
-  const { t } = useTranslation()
-  const dr = sessions?.date_range
-  const days = dr?.[0] ? Math.floor((new Date(dr[1]).getTime() - new Date(dr[0]).getTime()) / 86400000) + 1 : 0
-
-  return (
-    <Panel title={t('dashboard.status')}>
-      <div className="text-[13px] space-y-1" style={{ color: 'var(--hud-primary)' }}>
-        <div>{t('dashboard.processedThoughts')} {(sessions?.total_messages || 0).toLocaleString()} {t('dashboard.thoughtsAcross')} {days} {t('dashboard.days')}</div>
-        <div>{t('dashboard.correctedTimes')} {corrections?.total || 0} {t('dashboard.timesAndBetter')}</div>
-        <div style={{ color: 'var(--hud-primary-dim)' }}>{t('dashboard.doNotForget')}</div>
-        <div className="mt-2 font-bold" style={{ color: 'var(--hud-accent)' }}>{t('dashboard.stillBecoming')}</div>
-      </div>
-    </Panel>
-  )
-}
-
 export default function DashboardPanel() {
   const { t } = useTranslation()
   const { data } = useApi('/dashboard', 30000)
@@ -370,17 +459,19 @@ export default function DashboardPanel() {
     )
   }
 
-  const { state, health, projects, cron, corrections, snapshots } = data
+  const { state, health, projects, cron, corrections, snapshots, executive_summary } = data
   const { memory, user, skills, sessions } = state
 
   return (
     <>
+      <ExecutiveSummary summary={executive_summary} />
+
       {/* Row 1: identity + what I know + what I remember */}
       <Panel title={t('dashboard.overview')}>
         <IdentityBlock state={state} health={health} />
         <WhatIKnow sessions={sessions} skills={skills} />
       </Panel>
-      <WhatIRemember memory={memory} user={user} corrections={corrections} />
+      <WhatIRemember memory={memory} user={user} corrections={corrections} sessions={sessions} />
       <WhatISee health={health} />
 
       {/* Row 2: learning + working on + sleep */}
@@ -393,8 +484,6 @@ export default function DashboardPanel() {
       <MyRhythm sessions={sessions} />
       <GrowthDelta snapshots={snapshots || []} />
 
-      {/* Row 4: closing statements */}
-      <ClosingStatements sessions={sessions} corrections={corrections} />
     </>
   )
 }

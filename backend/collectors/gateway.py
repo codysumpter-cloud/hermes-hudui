@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Optional
 
 from ..cache import get_cached_or_compute
-from .models import GatewayState, PlatformStatus
-from .utils import default_hermes_dir, parse_timestamp
+from .models import GatewayState, ManagedToolStatus, ManagedToolsState, PlatformStatus
+from .utils import default_hermes_dir, load_yaml, parse_timestamp
 
 # Maps a stable action name (used in URLs + state files) to the `hermes`
 # argv to execute. Adding an action = adding one entry here.
@@ -24,6 +24,41 @@ ACTION_NAMES = frozenset(ACTIONS)
 
 # Bounded by len(ACTIONS); entries popped once we reap the child.
 _action_procs: dict[str, subprocess.Popen] = {}
+
+_MANAGED_TOOL_DEFS = [
+    {
+        "key": "web",
+        "label": "Web Search",
+        "section": "web",
+        "gateway_service": "firecrawl",
+        "direct_env_vars": ["FIRECRAWL_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY", "TAVILY_API_KEY"],
+        "direct_label": "Firecrawl/Exa/Parallel/Tavily key",
+    },
+    {
+        "key": "image_gen",
+        "label": "Image Generation",
+        "section": "image_gen",
+        "gateway_service": "fal-queue",
+        "direct_env_vars": ["FAL_KEY", "FAL_API_KEY"],
+        "direct_label": "FAL key",
+    },
+    {
+        "key": "tts",
+        "label": "Text to Speech",
+        "section": "tts",
+        "gateway_service": "openai-audio",
+        "direct_env_vars": ["OPENAI_API_KEY"],
+        "direct_label": "OpenAI audio key",
+    },
+    {
+        "key": "browser",
+        "label": "Browser Automation",
+        "section": "browser",
+        "gateway_service": "browser-use",
+        "direct_env_vars": ["BROWSER_USE_API_KEY", "BROWSERBASE_API_KEY"],
+        "direct_label": "Browser Use/Browserbase key",
+    },
+]
 
 
 def _pid_alive(pid: Optional[int]) -> bool:
@@ -48,17 +83,133 @@ def _pid_alive(pid: Optional[int]) -> bool:
     return True
 
 
+def _truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _load_config(hermes_path: Path) -> dict:
+    path = hermes_path / "config.yaml"
+    if not path.exists():
+        return {}
+    data = load_yaml(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {}
+
+
+def _has_nous_auth(hermes_path: Path, env: dict[str, str]) -> bool:
+    if env.get("NOUS_API_KEY") or env.get("NOUS_ACCESS_TOKEN"):
+        return True
+    for filename in ("auth.json", ".nous_oauth.json", "nous_auth.json"):
+        path = hermes_path / filename
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        text = json.dumps(data).lower()
+        if "nous" in text and ("access_token" in text or "api_key" in text or "token" in text):
+            return True
+    return False
+
+
+def collect_managed_tools(
+    hermes_dir: Optional[str] = None,
+    env: Optional[dict[str, str]] = None,
+) -> ManagedToolsState:
+    """Collect managed Tool Gateway routing state for user-facing tools."""
+    hermes_path = Path(default_hermes_dir(hermes_dir))
+    env = env if env is not None else os.environ
+    config = _load_config(hermes_path)
+    nous_auth_present = _has_nous_auth(hermes_path, env)
+    tools: list[ManagedToolStatus] = []
+
+    for item in _MANAGED_TOOL_DEFS:
+        section = config.get(item["section"], {})
+        section = section if isinstance(section, dict) else {}
+        use_gateway = _truthy(section.get("use_gateway"))
+        configured_env = [name for name in item["direct_env_vars"] if env.get(name)]
+        has_direct_credential = bool(configured_env)
+        config_section = str(item["section"])
+        direct_missing_label = f"direct {item['direct_label']}"
+        missing_config: list[str] = []
+        diagnostics = [
+            f"Gateway opt-in {'enabled' if use_gateway else 'disabled'} in {config_section}.use_gateway.",
+        ]
+        safe_actions: list[str] = []
+
+        if use_gateway:
+            diagnostics.append(
+                "Nous Portal auth is present." if nous_auth_present else "Nous Portal auth is missing."
+            )
+            safe_actions.append("gateway-restart")
+            if not nous_auth_present:
+                missing_config.append("Nous Portal auth")
+        else:
+            missing_config.append(f"{config_section}.use_gateway: true")
+
+        if has_direct_credential:
+            diagnostics.append(f"Direct credential configured: {configured_env[0]}.")
+        else:
+            diagnostics.append("No direct credential detected.")
+            if not use_gateway or not nous_auth_present:
+                missing_config.append(direct_missing_label)
+
+        if use_gateway and nous_auth_present:
+            route = "managed"
+            available = True
+            reason = "Routed through Nous Tool Gateway."
+        elif configured_env:
+            route = "direct"
+            available = True
+            reason = f"Using direct credential: {configured_env[0]}."
+        else:
+            route = "unavailable"
+            available = False
+            if use_gateway:
+                reason = "Gateway is enabled, but Nous Portal auth is missing."
+            else:
+                reason = f"No gateway opt-in or direct {item['direct_label']} configured."
+
+        tools.append(
+            ManagedToolStatus(
+                key=item["key"],
+                label=item["label"],
+                gateway_service=item["gateway_service"],
+                enabled=available,
+                available=available,
+                route=route,
+                config_section=config_section,
+                gateway_enabled=use_gateway,
+                has_direct_credential=has_direct_credential,
+                direct_env_vars=list(item["direct_env_vars"]),
+                configured_env_vars=configured_env,
+                missing_config=missing_config if not available else [],
+                diagnostics=diagnostics,
+                safe_actions=safe_actions,
+                reason=reason,
+            )
+        )
+
+    return ManagedToolsState(tools=tools, nous_auth_present=nous_auth_present)
+
+
 def _do_collect_gateway(hermes_path: Path) -> GatewayState:
     state_path = hermes_path / "gateway_state.json"
     if not state_path.exists():
-        return GatewayState()
+        return GatewayState(managed_tools=collect_managed_tools(str(hermes_path)))
 
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
     except Exception:
-        return GatewayState()
+        return GatewayState(managed_tools=collect_managed_tools(str(hermes_path)))
     if not isinstance(data, dict):
-        return GatewayState()
+        return GatewayState(managed_tools=collect_managed_tools(str(hermes_path)))
 
     pid = data.get("pid")
     platforms: list[PlatformStatus] = []
@@ -86,6 +237,7 @@ def _do_collect_gateway(hermes_path: Path) -> GatewayState:
         updated_at=parse_timestamp(data.get("updated_at")),
         active_agents=int(data.get("active_agents") or 0),
         platforms=platforms,
+        managed_tools=collect_managed_tools(str(hermes_path)),
     )
 
 

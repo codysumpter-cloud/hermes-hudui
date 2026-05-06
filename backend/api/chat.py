@@ -50,6 +50,10 @@ class ComposerStateResponse(BaseModel):
     model: str
     is_streaming: bool
     context_tokens: int
+    status: str = "idle"
+    elapsed_ms: int = 0
+    first_token_ms: int | None = None
+    total_ms: int | None = None
 
 
 @router.post("/sessions", response_model=SessionResponse)
@@ -277,6 +281,10 @@ async def get_composer_state(session_id: str) -> ComposerStateResponse:
             model=state.model,
             is_streaming=state.is_streaming,
             context_tokens=state.context_tokens,
+            status=state.status,
+            elapsed_ms=state.elapsed_ms,
+            first_token_ms=state.first_token_ms,
+            total_ms=state.total_ms,
         )
     except Exception as e:
         # Return default if session not found
@@ -284,12 +292,25 @@ async def get_composer_state(session_id: str) -> ComposerStateResponse:
             model="unknown",
             is_streaming=False,
             context_tokens=0,
+            status="idle",
+            elapsed_ms=0,
         )
 
 
 @router.get("/available")
 async def check_availability() -> dict[str, Any]:
     """Check if chat functionality is available."""
+    cli_available = chat_engine.is_available()
+
+    return {
+        "available": cli_available,
+        "cli_available": cli_available,
+    }
+
+
+@router.get("/diagnostics")
+async def check_diagnostics() -> dict[str, Any]:
+    """Return slower chat backend diagnostics outside the tab-open path."""
     from ..chat import TmuxChatFallback
 
     cli_available = chat_engine.is_available()
@@ -306,7 +327,7 @@ async def check_availability() -> dict[str, Any]:
     tmux_pane = TmuxChatFallback.find_hermes_pane() if tmux_available else None
 
     return {
-        "available": cli_available or direct_import or (tmux_available and tmux_pane is not None),
+        "available": cli_available,
         "cli_available": cli_available,
         "direct_import": direct_import,
         "tmux_available": tmux_available,

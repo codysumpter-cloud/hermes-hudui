@@ -71,6 +71,7 @@ class ChatSession:
     id: str
     profile: Optional[str] = None
     model: Optional[str] = None
+    hermes_session_id: Optional[str] = None
     title: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     last_activity: datetime = field(default_factory=datetime.now)
@@ -86,6 +87,10 @@ class ComposerState:
 
     model: str
     is_streaming: bool = False
+    status: str = "idle"
+    elapsed_ms: int = 0
+    first_token_ms: Optional[int] = None
+    total_ms: Optional[int] = None
     current_tool: Optional[ToolCall] = None
     context_tokens: int = 0
     estimated_cost: float = 0.0

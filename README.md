@@ -4,9 +4,13 @@ A browser-based consciousness monitor for [Hermes](https://github.com/nousresear
 
 Same data, same soul, same dashboard that made the [TUI version](https://github.com/joeynyc/hermes-hud) popular — now in your browser.
 
-![Token Costs](assets/dashboard-costs.png)
+![Executive Dashboard](assets/dashboard-executive.png)
 
-![Agent Profiles](assets/profiles.png)
+![Gateway Managed Tools](assets/gateway-tools.png)
+
+![Model Analytics](assets/model-analytics.png)
+
+![Plugin Hub](assets/plugin-hub.png)
 
 ## Quick Start
 
@@ -28,9 +32,15 @@ source venv/bin/activate && hermes-hudui
 
 ## What's Inside
 
-17 tabs covering everything your agent knows about itself — identity, memory, skills, sessions, cron jobs, projects, health, costs, patterns, corrections, sudo governance, live chat, connected OAuth providers, gateway control, and live model capabilities.
+18 tabs covering everything your agent knows about itself — executive dashboard, identity, memory, skills, sessions, cron jobs, projects, health diagnostics, costs, model analytics, patterns, corrections, sudo governance, live chat, connected OAuth providers, gateway control, plugin management, and live model capabilities.
 
-Updates in real-time via WebSocket. No manual refresh needed.
+The Dashboard opens with an executive summary: health, spend pulse, top model, provider/gateway risk, highest-cost session, and action items. Health reacts to filesystem and WebSocket updates, while expensive refresh paths stay throttled.
+
+Gateway visibility includes managed-tool routing for web search, image generation, text-to-speech, and browser automation. You can see whether each tool is routed through Nous Tool Gateway, a direct key, or is unavailable. The `Update hermes` action is deliberately two-click and shows last-run logs/status.
+
+The Plugin Hub shows installed dashboard and agent plugins, extension entry points, runtime status, required auth commands, and safe enable/disable/update actions.
+
+Updates in real time via WebSocket. No manual refresh needed.
 
 ## Language Support
 
@@ -38,7 +48,9 @@ English (default) and Chinese. Click the language toggle at the far right of the
 
 ## Themes
 
-Four themes switchable with `t`: **Neural Awakening** (cyan), **Blade Runner** (amber), **fsociety** (green), **Anime** (purple). Optional CRT scanlines.
+Five themes switchable with `t`: **Neural Awakening** (cyan), **Hermes Teal** (official Nous dashboard palette), **Blade Runner** (amber), **fsociety** (green), **Anime** (purple). Optional CRT scanlines.
+
+The top tab bar is responsive: resize the browser and tabs stay reachable through horizontal scrolling, with the active tab kept in view.
 
 ## Keyboard Shortcuts
 
@@ -52,7 +64,7 @@ Four themes switchable with `t`: **Neural Awakening** (cyan), **Blade Runner** (
 
 This is the browser companion to [hermes-hud](https://github.com/joeynyc/hermes-hud). Both read from the same `~/.hermes/` data directory independently — use either one, or both at the same time.
 
-The Web UI is fully standalone and adds features the TUI doesn't have: dedicated Memory, Skills, and Sessions tabs; per-model token cost tracking; command palette; live chat; theme switcher.
+The Web UI is fully standalone and adds features the TUI doesn't have: dedicated Memory, Skills, Sessions, Health, Providers, Gateway, Model, and Plugins tabs; per-model token and cost analytics; gateway managed-tool visibility; actionable diagnostics; command palette; live chat; theme switcher.
 
 If you also have the TUI installed, you can enable it with `pip install 'hermes-hudui[tui]'`.
 

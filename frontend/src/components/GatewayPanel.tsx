@@ -3,6 +3,7 @@ import { useApi } from '../hooks/useApi'
 import Panel from './Panel'
 import { timeAgo } from '../lib/utils'
 import { useTranslation } from '../i18n'
+import type { TranslationKey } from '../i18n'
 import { mutate } from 'swr'
 
 interface GatewayData {
@@ -21,6 +22,29 @@ interface GatewayData {
     error_code: string | null
     error_message: string | null
   }[]
+  managed_tools: {
+    tools: {
+      key: string
+      label: string
+      gateway_service: string
+      enabled: boolean
+      available: boolean
+      route: 'managed' | 'direct' | 'unavailable'
+      config_section: string
+      gateway_enabled: boolean
+      has_direct_credential: boolean
+      direct_env_vars: string[]
+      configured_env_vars: string[]
+      missing_config: string[]
+      diagnostics: string[]
+      safe_actions: string[]
+      reason: string
+    }[]
+    nous_auth_present: boolean
+    managed_count: number
+    direct_count: number
+    unavailable_count: number
+  }
 }
 
 interface ActionStatus {
@@ -39,22 +63,51 @@ function platformColor(state: string): string {
   return 'var(--hud-error)'
 }
 
+function routeColor(route: string): string {
+  if (route === 'managed') return 'var(--hud-primary)'
+  if (route === 'direct') return 'var(--hud-success)'
+  return 'var(--hud-error)'
+}
+
+const SAFE_ACTIONS: Record<string, { postPath: string; labelKey: TranslationKey }> = {
+  'gateway-restart': { postPath: '/api/gateway/restart', labelKey: 'gateway.restart' },
+}
+
+type SafeAction = {
+  name: string
+  meta: { postPath: string; labelKey: TranslationKey }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function ActionRunner({
   actionName,
   postPath,
   label,
+  description,
+  confirmLabel,
+  confirmPrompt,
+  showLastStatus = false,
   onStateChange,
 }: {
   actionName: string
   postPath: string
   label: string
+  description?: string
+  confirmLabel?: string
+  confirmPrompt?: string
+  showLastStatus?: boolean
   onStateChange: () => void
 }) {
   const { t } = useTranslation()
   const [polling, setPolling] = useState(false)
   const [status, setStatus] = useState<ActionStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState(false)
   const timerRef = useRef<number | null>(null)
+  const confirmTimerRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -64,6 +117,10 @@ function ActionRunner({
       if (timerRef.current !== null) {
         window.clearTimeout(timerRef.current)
         timerRef.current = null
+      }
+      if (confirmTimerRef.current !== null) {
+        window.clearTimeout(confirmTimerRef.current)
+        confirmTimerRef.current = null
       }
     }
   }, [])
@@ -76,52 +133,92 @@ function ActionRunner({
       if (!mountedRef.current) return
       setStatus(data)
       if (data.running) {
+        setPolling(true)
         timerRef.current = window.setTimeout(pollOnce, 1000)
       } else {
         setPolling(false)
         onStateChange()
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!mountedRef.current) return
-      setError(String(e.message || e))
+      setError(errorMessage(e))
       setPolling(false)
     }
   }, [actionName, onStateChange])
 
+  useEffect(() => {
+    if (showLastStatus) {
+      pollOnce()
+    }
+  }, [pollOnce, showLastStatus])
+
   const trigger = async () => {
+    if (confirmPrompt && !confirming) {
+      setConfirming(true)
+      if (confirmTimerRef.current !== null) {
+        window.clearTimeout(confirmTimerRef.current)
+      }
+      confirmTimerRef.current = window.setTimeout(() => {
+        if (mountedRef.current) setConfirming(false)
+      }, 6000)
+      return
+    }
+
+    setConfirming(false)
     setError(null)
-    setStatus(null)
     setPolling(true)
     try {
       const res = await fetch(postPath, { method: 'POST' })
       if (!res.ok) throw new Error(await res.text())
       if (!mountedRef.current) return
       timerRef.current = window.setTimeout(pollOnce, 500)
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (!mountedRef.current) return
-      setError(String(e.message || e))
+      setError(errorMessage(e))
       setPolling(false)
     }
   }
 
   return (
     <div>
+      {description && (
+        <div className="mb-1 text-[12px]" style={{ color: 'var(--hud-text-dim)' }}>
+          {description}
+        </div>
+      )}
       <button
         onClick={trigger}
         disabled={polling}
         className="px-3 py-1.5 text-[13px] rounded"
         style={{
-          background: polling ? 'var(--hud-panel-alt, transparent)' : 'var(--hud-primary)',
+          background: polling
+            ? 'var(--hud-panel-alt, transparent)'
+            : confirming
+              ? 'var(--hud-warning)'
+              : 'var(--hud-primary)',
           color: polling ? 'var(--hud-text-dim)' : 'var(--hud-bg)',
           cursor: polling ? 'not-allowed' : 'pointer',
           border: '1px solid var(--hud-border)',
         }}
       >
-        {polling ? t('gateway.running') : label}
+        {polling ? t('gateway.running') : confirming ? (confirmLabel || label) : label}
       </button>
+      {confirming && confirmPrompt && (
+        <div className="mt-2 text-[12px]" style={{ color: 'var(--hud-warning)' }}>
+          {confirmPrompt}
+        </div>
+      )}
       {error && (
         <div className="mt-2 text-[12px]" style={{ color: 'var(--hud-error)' }}>
           {error}
+        </div>
+      )}
+      {status && showLastStatus && (
+        <div className="mt-2 text-[11px] space-y-0.5" style={{ color: 'var(--hud-text-dim)' }}>
+          <div>
+            {t('gateway.lastRun')}: {status.started_at ? timeAgo(new Date(status.started_at * 1000).toISOString()) : t('gateway.neverRun')}
+          </div>
+          <div className="font-mono truncate">{status.log_path}</div>
         </div>
       )}
       {status && status.lines.length > 0 && (
@@ -138,7 +235,7 @@ function ActionRunner({
       )}
       {status && !status.running && status.exit_code !== null && (
         <div className="mt-1 text-[11px]" style={{ color: status.exit_code === 0 ? 'var(--hud-success)' : 'var(--hud-error)' }}>
-          {t('gateway.exitCode')}: {status.exit_code}
+          {status.exit_code === 0 ? t('gateway.actionSucceeded') : t('gateway.actionFailed')} · {t('gateway.exitCode')}: {status.exit_code}
         </div>
       )}
     </div>
@@ -164,6 +261,7 @@ export default function GatewayPanel() {
   const healthy = data?.state === 'running' && data?.pid_alive
 
   return (
+    <>
     <Panel title={t('gateway.title')} className="col-span-full">
       <div className="grid sm:grid-cols-2 gap-4">
         <div>
@@ -226,6 +324,10 @@ export default function GatewayPanel() {
                 actionName="hermes-update"
                 postPath="/api/hermes/update"
                 label={t('gateway.update')}
+                description={t('gateway.updateDescription')}
+                confirmLabel={t('gateway.confirmUpdate')}
+                confirmPrompt={t('gateway.updateConfirmPrompt')}
+                showLastStatus
                 onStateChange={refresh}
               />
             </div>
@@ -233,5 +335,96 @@ export default function GatewayPanel() {
         </div>
       </div>
     </Panel>
+    <Panel title={t('gateway.managedTools')} className="col-span-full">
+      <div className="flex flex-wrap gap-2 mb-3 text-[12px]">
+        <span style={{ color: 'var(--hud-text-dim)' }}>{t('gateway.nousAuth')}: </span>
+        <span style={{ color: data?.managed_tools?.nous_auth_present ? 'var(--hud-success)' : 'var(--hud-error)' }}>
+          {data?.managed_tools?.nous_auth_present ? t('gateway.present') : t('gateway.missing')}
+        </span>
+        <span style={{ color: 'var(--hud-primary)' }}>{t('gateway.managed')}: {data?.managed_tools?.managed_count ?? 0}</span>
+        <span style={{ color: 'var(--hud-success)' }}>{t('gateway.direct')}: {data?.managed_tools?.direct_count ?? 0}</span>
+        <span style={{ color: 'var(--hud-error)' }}>{t('gateway.unavailable')}: {data?.managed_tools?.unavailable_count ?? 0}</span>
+      </div>
+      <div className="grid md:grid-cols-2 gap-2">
+        {(data?.managed_tools?.tools ?? []).map((tool) => {
+          const safeActions = tool.safe_actions.reduce<SafeAction[]>((actions, name) => {
+            const meta = SAFE_ACTIONS[name]
+            if (meta) actions.push({ name, meta })
+            return actions
+          }, [])
+
+          return (
+          <div key={tool.key} className="p-3 border" style={{ borderColor: 'var(--hud-border)' }}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="text-[14px] font-semibold" style={{ color: 'var(--hud-text)' }}>{tool.label}</div>
+                <div className="text-[12px]" style={{ color: 'var(--hud-text-dim)' }}>{tool.gateway_service}</div>
+              </div>
+              <span className="px-1.5 py-0.5 text-[11px] uppercase tracking-widest" style={{ color: routeColor(tool.route), border: `1px solid ${routeColor(tool.route)}` }}>
+                {tool.route}
+              </span>
+            </div>
+            <div className="mt-2 text-[12px]" style={{ color: tool.available ? 'var(--hud-text-dim)' : 'var(--hud-error)' }}>
+              {tool.reason}
+            </div>
+            <div className="mt-3 grid sm:grid-cols-2 gap-3 text-[11px]">
+              <div>
+                <div className="uppercase tracking-widest mb-1" style={{ color: 'var(--hud-text-dim)' }}>
+                  {t('gateway.diagnostics')}
+                </div>
+                <ul className="space-y-1">
+                  {tool.diagnostics.map((diagnostic) => (
+                    <li key={diagnostic} style={{ color: 'var(--hud-text-dim)' }}>
+                      {diagnostic}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <div className="uppercase tracking-widest mb-1" style={{ color: 'var(--hud-text-dim)' }}>
+                  {t('gateway.missingConfig')}
+                </div>
+                {tool.missing_config.length > 0 ? (
+                  <ul className="space-y-1">
+                    {tool.missing_config.map((item) => (
+                      <li key={item} style={{ color: 'var(--hud-error)' }}>
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{ color: 'var(--hud-success)' }}>{t('gateway.none')}</div>
+                )}
+              </div>
+            </div>
+            {tool.configured_env_vars.length > 0 && (
+              <div className="mt-2 text-[11px] font-mono" style={{ color: 'var(--hud-success)' }}>
+                {tool.configured_env_vars.join(', ')}
+              </div>
+            )}
+            {safeActions.length > 0 && (
+              <div className="mt-3">
+                <div className="uppercase tracking-widest mb-2 text-[11px]" style={{ color: 'var(--hud-text-dim)' }}>
+                  {t('gateway.safeActions')}
+                </div>
+                <div className="space-y-2">
+                  {safeActions.map((action) => (
+                    <ActionRunner
+                      key={action.name}
+                      actionName={action.name}
+                      postPath={action.meta.postPath}
+                      label={t(action.meta.labelKey)}
+                      onStateChange={refresh}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          )
+        })}
+      </div>
+    </Panel>
+    </>
   )
 }

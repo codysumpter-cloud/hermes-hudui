@@ -16,6 +16,7 @@ export default function ChatPanel() {
     error,
     sendMessage,
     cancelStream,
+    loadComposerState,
     regenerate,
   } = useChat(activeSessionId)
 
@@ -80,6 +81,16 @@ export default function ChatPanel() {
       setActiveSessionId(sessions[0].id)
     }
   }, [activeSessionId, sessions])
+
+  useEffect(() => {
+    if (!activeSessionId) return
+
+    loadComposerState()
+    if (!isStreaming) return
+
+    const interval = window.setInterval(loadComposerState, 1000)
+    return () => window.clearInterval(interval)
+  }, [activeSessionId, isStreaming, loadComposerState])
 
   // Show loading while checking availability
   if (checkingAvailability) {
@@ -160,6 +171,9 @@ export default function ChatPanel() {
                 onCancel={cancelStream}
                 isStreaming={isStreaming}
                 model={composerState.model}
+                status={composerState.status}
+                elapsedMs={composerState.elapsedMs}
+                firstTokenMs={composerState.firstTokenMs}
               />
             </>
           ) : (

@@ -9,12 +9,13 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from backend.collectors.utils import default_hermes_dir
+from backend.collectors.utils import default_hermes_dir, load_yaml
 from .models import (
     ChatSession,
     ComposerState,
@@ -104,6 +105,7 @@ class ChatEngine:
         self._sessions: dict[str, ChatSession] = {}
         self._streamers: dict[str, ChatStreamer] = {}
         self._processes: dict[str, subprocess.Popen] = {}
+        self._run_state: dict[str, dict[str, float | str | None]] = {}
         self._initialized = True
         self._hermes_path = shutil.which("hermes")
         self._cli_available = self._check_cli()
@@ -123,6 +125,29 @@ class ChatEngine:
     def is_available(self) -> bool:
         """Check if chat is available."""
         return self._cli_available
+
+    def _configured_model(self, profile: Optional[str] = None) -> str:
+        """Return the configured Hermes model for the default or named profile."""
+        hermes_path = Path(default_hermes_dir())
+        if profile and profile != "default":
+            hermes_path = hermes_path / "profiles" / profile
+
+        config_path = hermes_path / "config.yaml"
+        if not config_path.exists():
+            return "unknown"
+
+        try:
+            config = load_yaml(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            return "unknown"
+
+        model_cfg = config.get("model") if isinstance(config, dict) else None
+        if isinstance(model_cfg, str):
+            return model_cfg.strip() or "unknown"
+        if isinstance(model_cfg, dict):
+            model = str(model_cfg.get("default") or model_cfg.get("model") or "").strip()
+            return model or "unknown"
+        return "unknown"
 
     def create_session(
         self, profile: Optional[str] = None, model: Optional[str] = None
@@ -204,6 +229,13 @@ class ChatEngine:
         # Update session stats
         session.message_count += 1
         session.last_activity = datetime.now()
+        self._run_state[session_id] = {
+            "status": "starting_hermes",
+            "started_at": time.monotonic(),
+            "process_started_at": None,
+            "first_token_at": None,
+            "finished_at": None,
+        }
 
         # Build command: hermes chat -q "message" -Q (quiet mode)
         cmd = [self._hermes_path, "chat", "-q", content, "-Q"]
@@ -211,6 +243,8 @@ class ChatEngine:
             cmd.extend(["--profile", session.profile])
         if session.model:
             cmd.extend(["-m", session.model])
+        if session.hermes_session_id:
+            cmd.extend(["--resume", session.hermes_session_id])
         # Tag as tool source so it doesn't clutter user session list
         cmd.extend(["--source", "tool"])
 
@@ -242,6 +276,9 @@ class ChatEngine:
                     cwd=os.path.expanduser("~"),
                 )
                 self._processes[session_id] = process
+                if session_id in self._run_state:
+                    self._run_state[session_id]["process_started_at"] = time.monotonic()
+                    self._run_state[session_id]["status"] = "connecting_model"
 
                 # Stream stdout in chunks; process complete lines through the
                 # decoration filter and emit partial trailing content immediately
@@ -299,6 +336,11 @@ class ChatEngine:
                         return
 
                     started_content = True
+                    state = self._run_state.get(session_id)
+                    if state:
+                        if state.get("first_token_at") is None:
+                            state["first_token_at"] = time.monotonic()
+                        state["status"] = "streaming"
                     streamer.emit_token(text)
 
                 while True:
@@ -316,6 +358,9 @@ class ChatEngine:
                     while b"\n" in line_buf:
                         line, line_buf = line_buf.split(b"\n", 1)
                         _process_line(line + b"\n")
+                    if started_content and line_buf:
+                        _process_line(line_buf)
+                        line_buf = b""
 
                 # Flush any remaining partial line
                 if line_buf:
@@ -325,20 +370,35 @@ class ChatEngine:
                 stderr_thread.join(timeout=2)
 
                 hermes_session_id = captured_session_id[0] if captured_session_id else None
+                if hermes_session_id:
+                    session.hermes_session_id = hermes_session_id
 
                 # Emit tool calls and reasoning from state.db
                 if hermes_session_id and not streamer._stopped.is_set():
+                    if session_id in self._run_state:
+                        self._run_state[session_id]["status"] = "finalizing_tools"
                     _emit_tool_events(streamer, hermes_session_id)
 
-                if process.returncode != 0 and stderr_lines:
-                    streamer.emit_error("CLI error: " + "\n".join(stderr_lines))
+                if process.returncode != 0:
+                    if session_id in self._run_state:
+                        self._run_state[session_id]["status"] = "error"
+                    error_detail = "\n".join(stderr_lines) or f"hermes exited with code {process.returncode}"
+                    streamer.emit_error("CLI error: " + error_detail)
                 else:
+                    if session_id in self._run_state:
+                        self._run_state[session_id]["status"] = "complete"
                     streamer.emit_done()
 
             except Exception as e:
+                if session_id in self._run_state:
+                    self._run_state[session_id]["status"] = "error"
                 streamer.emit_error(f"Failed to run hermes: {e}")
             finally:
+                if session_id in self._run_state:
+                    self._run_state[session_id]["finished_at"] = time.monotonic()
                 self._processes.pop(session_id, None)
+                if self._streamers.get(session_id) is streamer:
+                    self._streamers.pop(session_id, None)
 
         threading.Thread(target=run_subprocess, daemon=True).start()
 
@@ -346,14 +406,29 @@ class ChatEngine:
 
     def cancel_stream(self, session_id: str) -> None:
         """Kill the active subprocess for a session, stopping the stream."""
-        if session_id in self._processes:
+        self._run_state.setdefault(session_id, {"started_at": time.monotonic()})
+        process = self._processes.pop(session_id, None)
+        if process:
+            if session_id in self._run_state:
+                self._run_state[session_id]["status"] = "cancelling"
             try:
-                self._processes[session_id].terminate()
+                process.terminate()
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                    process.wait(timeout=1)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
-        if session_id in self._streamers:
-            self._streamers[session_id].stop()
+        streamer = self._streamers.pop(session_id, None)
+        if streamer:
+            streamer.stop()
+        if session_id in self._run_state:
+            self._run_state[session_id]["status"] = "cancelled"
+            self._run_state[session_id]["finished_at"] = time.monotonic()
 
     def get_composer_state(self, session_id: str) -> ComposerState:
         """Get current composer state for UI."""
@@ -361,9 +436,42 @@ class ChatEngine:
         if not session:
             return ComposerState(model="unknown")
 
+        process = self._processes.get(session_id)
+        is_streaming = False
+        if process is not None:
+            try:
+                is_streaming = process.poll() is None
+            except Exception:
+                is_streaming = True
+
+        run_state = self._run_state.get(session_id) or {}
+        started_at = run_state.get("started_at")
+        first_token_at = run_state.get("first_token_at")
+        finished_at = run_state.get("finished_at")
+        now = time.monotonic()
+        end_at = finished_at if isinstance(finished_at, float) else now
+
+        elapsed_ms = int((end_at - started_at) * 1000) if isinstance(started_at, float) else 0
+        first_token_ms = (
+            int((first_token_at - started_at) * 1000)
+            if isinstance(started_at, float) and isinstance(first_token_at, float)
+            else None
+        )
+        total_ms = (
+            int((finished_at - started_at) * 1000)
+            if isinstance(started_at, float) and isinstance(finished_at, float)
+            else None
+        )
+
+        status = str(run_state.get("status") or ("streaming" if is_streaming else "idle"))
+
         return ComposerState(
-            model=session.model or "claude-4-sonnet",
-            is_streaming=session_id in self._streamers,
+            model=session.model or self._configured_model(session.profile),
+            is_streaming=is_streaming,
+            status=status,
+            elapsed_ms=elapsed_ms,
+            first_token_ms=first_token_ms,
+            total_ms=total_ms,
             context_tokens=0,
         )
 

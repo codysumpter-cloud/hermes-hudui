@@ -6,13 +6,42 @@ interface ComposerProps {
   onCancel?: () => void
   isStreaming: boolean
   model: string
+  status?: string
+  elapsedMs?: number
+  firstTokenMs?: number | null
   disabled?: boolean
 }
 
-export default function Composer({ onSend, onCancel, isStreaming, model, disabled }: ComposerProps) {
+const STATUS_LABELS: Record<string, string> = {
+  starting_hermes: 'starting Hermes',
+  connecting_model: 'connecting model',
+  streaming: 'streaming',
+  finalizing_tools: 'finalizing tools',
+  cancelling: 'cancelling',
+  cancelled: 'cancelled',
+  error: 'error',
+}
+
+function formatSeconds(ms?: number | null) {
+  if (!ms || ms < 0) return ''
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)}s`
+}
+
+export default function Composer({
+  onSend,
+  onCancel,
+  isStreaming,
+  model,
+  status = 'idle',
+  elapsedMs = 0,
+  firstTokenMs = null,
+  disabled,
+}: ComposerProps) {
   const { t } = useTranslation()
   const [input, setInput] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const statusLabel = STATUS_LABELS[status] ?? t('chat.thinking')
+  const timingLabel = firstTokenMs ? `first token ${formatSeconds(firstTokenMs)}` : formatSeconds(elapsedMs)
 
   const handleSubmit = () => {
     const trimmed = input.trim()
@@ -104,7 +133,7 @@ export default function Composer({ onSend, onCancel, isStreaming, model, disable
       >
         <span>{model !== 'unknown' ? model : ''}</span>
         <span style={{ color: isStreaming ? 'var(--hud-warning)' : 'var(--hud-text-dim)' }}>
-          {isStreaming ? t('chat.thinking') : t('chat.enterHint')}
+          {isStreaming ? `${statusLabel}${timingLabel ? ` · ${timingLabel}` : ''}` : t('chat.enterHint')}
         </span>
       </div>
     </div>

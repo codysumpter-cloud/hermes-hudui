@@ -6,6 +6,31 @@ All notable changes to hermes-hudui are documented here.
 
 ---
 
+## [0.8.0] — 2026-05-05
+
+### Added
+- **Dashboard executive summary** — the Dashboard now leads with health, spend pulse, top model, provider/gateway risk, highest-cost session, and action items derived from health, model analytics, gateway, providers, and token-cost data.
+- **Plugin Hub** — new dashboard view for installed user/system plugins, dashboard extension manifests, agent plugins, runtime status, auth requirements, and safe plugin actions.
+- **Gateway managed-tool visibility** — the Gateway tab now shows routing state for web search, image generation, text-to-speech, and browser automation, including managed gateway access, direct credential fallback, missing config, diagnostics, and safe actions.
+- **Model analytics upgrade** — the Model tab now includes rich per-model usage: provider, token split, actual vs estimated cost, API calls, tool calls, last used, average tokens/session, capabilities, sortable columns, and session drilldown.
+- **Actionable Health diagnostics** — Health now exposes more specific checks, suggested fixes, and actions, including gateway, model analytics schema, cache, websocket, sudo, provider, and database signals.
+- **Health live updates** — Health reacts to websocket `data_changed` events with throttled refresh behavior so the tab updates promptly without excessive CPU churn.
+- **Official Hermes Teal theme** — added the canonical Nous Hermes dashboard palette as a selectable theme.
+- **Fresh release screenshots** — README assets now show the executive dashboard, managed gateway tools, model analytics, plugin hub, and responsive top bar.
+
+### Changed
+- **Dashboard memory narrative** — the previous Status panel copy now lives inside "What I Remember" with compact stats and a stronger visual treatment.
+- **Gateway update action hardening** — `Update hermes` now requires a second confirmation click, displays explanatory copy, and surfaces last-run time, log path, log tail, and success/failure exit code.
+- **Responsive top navigation** — the tab bar now resizes with the browser, scrolls horizontally when needed, and keeps the active tab in view.
+- **README refresh** — updated feature counts, theme list, feature descriptions, and screenshots for the current UI.
+
+### Fixed
+- **Session compression visibility** — sessions now surface compression-related metadata again where available.
+- **Hermes Teal contrast** — fixed unreadable badge/card text by adding shared theme aliases and tuning the HUD error color for readable contrast on teal panels.
+- **Gateway/Health/Model visual regression coverage** — added focused regression tests for dashboard summary aggregation, theme registration/contrast variables, responsive shell structure, and Gateway update confirmation/status behavior.
+
+---
+
 ## [0.7.0] — 2026-04-29
 
 ### Added

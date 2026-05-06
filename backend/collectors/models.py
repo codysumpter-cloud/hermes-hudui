@@ -77,6 +77,57 @@ class SkillsState:
         return sorted(self.skills, key=lambda s: s.modified_at, reverse=True)[:n]
 
 
+# ── Plugins ─────────────────────────────────────────────────
+
+@dataclass
+class PluginInfo:
+    name: str
+    label: str
+    description: str
+    version: str
+    source: str  # user, bundled, project
+    path: str
+    runtime_status: str = "inactive"  # enabled, disabled, inactive
+    has_dashboard_manifest: bool = False
+    has_api: bool = False
+    user_hidden: bool = False
+    entry: str = ""
+    css: Optional[str] = None
+    icon: str = "Puzzle"
+    tab_path: str = ""
+    tab_position: str = "end"
+    slots: list[str] = field(default_factory=list)
+    provides_tools: list[str] = field(default_factory=list)
+    auth_required: bool = False
+    auth_command: str = ""
+    can_update_git: bool = False
+
+
+@dataclass
+class PluginsState:
+    plugins: list[PluginInfo] = field(default_factory=list)
+    orphan_dashboard_plugins: list[PluginInfo] = field(default_factory=list)
+
+    @property
+    def total_plugins(self) -> int:
+        return len(self.plugins)
+
+    @property
+    def dashboard_count(self) -> int:
+        return sum(1 for p in self.plugins if p.has_dashboard_manifest)
+
+    @property
+    def agent_count(self) -> int:
+        return sum(1 for p in self.plugins if p.provides_tools or p.runtime_status != "inactive")
+
+    @property
+    def hidden_count(self) -> int:
+        return sum(1 for p in self.plugins if p.user_hidden)
+
+    def by_source(self) -> dict[str, int]:
+        return dict(Counter(p.source for p in self.plugins))
+
+
 # ── Sessions ────────────────────────────────────────────────
 
 @dataclass
@@ -392,12 +443,16 @@ class ProviderAuth:
     scope: str = ""
     is_active: bool = False
     auth_mode: str = ""
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
 class ProvidersState:
     providers: list[ProviderAuth] = field(default_factory=list)
     active_provider: Optional[str] = None
+    config_provider: str = ""
+    config_model: str = ""
+    warnings: list[str] = field(default_factory=list)
 
 
 # ── Gateway status + actions ────────────────────────────────
@@ -412,6 +467,43 @@ class PlatformStatus:
 
 
 @dataclass
+class ManagedToolStatus:
+    key: str
+    label: str
+    gateway_service: str
+    enabled: bool = False
+    available: bool = False
+    route: str = "unavailable"  # managed | direct | unavailable
+    config_section: str = ""
+    gateway_enabled: bool = False
+    has_direct_credential: bool = False
+    direct_env_vars: list[str] = field(default_factory=list)
+    configured_env_vars: list[str] = field(default_factory=list)
+    missing_config: list[str] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
+    safe_actions: list[str] = field(default_factory=list)
+    reason: str = ""
+
+
+@dataclass
+class ManagedToolsState:
+    tools: list[ManagedToolStatus] = field(default_factory=list)
+    nous_auth_present: bool = False
+
+    @property
+    def managed_count(self) -> int:
+        return sum(1 for t in self.tools if t.route == "managed")
+
+    @property
+    def direct_count(self) -> int:
+        return sum(1 for t in self.tools if t.route == "direct")
+
+    @property
+    def unavailable_count(self) -> int:
+        return sum(1 for t in self.tools if t.route == "unavailable")
+
+
+@dataclass
 class GatewayState:
     state: str = "unknown"
     pid: Optional[int] = None
@@ -422,6 +514,7 @@ class GatewayState:
     updated_at: Optional[datetime] = None
     active_agents: int = 0
     platforms: list[PlatformStatus] = field(default_factory=list)
+    managed_tools: ManagedToolsState = field(default_factory=ManagedToolsState)
 
 
 # ── Model capabilities ──────────────────────────────────────
@@ -445,3 +538,103 @@ class ModelCapabilities:
     release_date: str = ""
     knowledge_cutoff: str = ""
     found: bool = False
+
+
+@dataclass
+class ModelSessionUsage:
+    id: str
+    title: str = ""
+    source: str = ""
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    messages: int = 0
+    api_calls: int = 0
+    tool_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    actual_cost_usd: float = 0.0
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+            + self.reasoning_tokens
+        )
+
+    @property
+    def duration_seconds(self) -> int:
+        if not self.started_at or not self.ended_at:
+            return 0
+        return max(0, round((self.ended_at - self.started_at).total_seconds()))
+
+
+@dataclass
+class ModelUsage:
+    model: str
+    provider: str = ""
+    sessions: int = 0
+    messages: int = 0
+    api_calls: int = 0
+    tool_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    actual_cost_usd: float = 0.0
+    last_used_at: Optional[datetime] = None
+    supports_tools: bool = False
+    supports_vision: bool = False
+    supports_reasoning: bool = False
+    supports_structured_output: bool = False
+    context_window: int = 0
+    max_output_tokens: int = 0
+    session_details: list[ModelSessionUsage] = field(default_factory=list)
+
+    @property
+    def total_tokens(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+            + self.reasoning_tokens
+        )
+
+    @property
+    def avg_tokens_per_session(self) -> int:
+        return round(self.total_tokens / self.sessions) if self.sessions else 0
+
+
+@dataclass
+class ModelAnalyticsState:
+    models: list[ModelUsage] = field(default_factory=list)
+    period_days: Optional[int] = 30
+
+    @property
+    def total_models(self) -> int:
+        return len(self.models)
+
+    @property
+    def total_sessions(self) -> int:
+        return sum(m.sessions for m in self.models)
+
+    @property
+    def total_tokens(self) -> int:
+        return sum(m.total_tokens for m in self.models)
+
+    @property
+    def total_estimated_cost_usd(self) -> float:
+        return round(sum(m.estimated_cost_usd for m in self.models), 6)
+
+    @property
+    def total_actual_cost_usd(self) -> float:
+        return round(sum(m.actual_cost_usd for m in self.models), 6)

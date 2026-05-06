@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -41,6 +40,95 @@ def _extract_tool_usage(db_path: str) -> dict[str, int]:
     return usage
 
 
+def _table_columns(cursor: sqlite3.Cursor, table: str) -> set[str]:
+    """Return the column names for a SQLite table."""
+    cursor.execute(f"PRAGMA table_info({table})")
+    return {str(row[1]) for row in cursor.fetchall()}
+
+
+def _optional_column(columns: set[str], name: str, default: str = "NULL") -> str:
+    return name if name in columns else f"{default} AS {name}"
+
+
+def _human_session_where(columns: set[str]) -> str:
+    """Filter to user-facing sessions, matching Hermes' current deny-list."""
+    clauses = ["LOWER(COALESCE(source, '')) != 'tool'"]
+    if {"parent_session_id", "end_reason"}.issubset(columns):
+        clauses.append("""
+            (
+              parent_session_id IS NULL
+              OR EXISTS (
+                  SELECT 1 FROM sessions p
+                  WHERE p.id = sessions.parent_session_id
+                    AND p.end_reason = 'branched'
+                    AND sessions.started_at >= p.ended_at
+              )
+            )
+        """)
+    return " AND ".join(clauses)
+
+
+def _compression_tip(conn: sqlite3.Connection, session_id: str) -> str:
+    """Mirror Hermes' compression-chain projection for session lists."""
+    current = session_id
+    for _ in range(100):
+        row = conn.execute(
+            """SELECT child.id
+               FROM sessions parent
+               JOIN sessions child ON child.parent_session_id = parent.id
+               WHERE parent.id = ?
+                 AND parent.end_reason = 'compression'
+                 AND child.started_at >= COALESCE(parent.ended_at, 0)
+               ORDER BY child.started_at DESC
+               LIMIT 1""",
+            (current,),
+        ).fetchone()
+        if row is None:
+            return current
+        current = row["id"]
+    return current
+
+
+def _parse_model(row: sqlite3.Row) -> str | None:
+    """Prefer Hermes' direct model column, falling back to old model_config JSON."""
+    model = safe_get(row, "model")
+    if model:
+        return model
+
+    mc_raw = safe_get(row, "model_config")
+    if mc_raw:
+        try:
+            mc = json.loads(mc_raw)
+            return mc.get("model") or mc.get("default")
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return None
+
+
+def _session_from_row(row: sqlite3.Row) -> SessionInfo:
+    started_raw = safe_get(row, "started_at", 0)
+    started = datetime.fromtimestamp(started_raw)
+    ended_raw = safe_get(row, "ended_at")
+    ended = datetime.fromtimestamp(ended_raw) if ended_raw else None
+
+    return SessionInfo(
+        id=safe_get(row, "id", ""),
+        source=safe_get(row, "source", "unknown"),
+        title=safe_get(row, "title"),
+        started_at=started,
+        ended_at=ended,
+        message_count=safe_get(row, "message_count", 0),
+        tool_call_count=safe_get(row, "tool_call_count", 0),
+        input_tokens=safe_get(row, "input_tokens", 0),
+        output_tokens=safe_get(row, "output_tokens", 0),
+        cache_read_tokens=safe_get(row, "cache_read_tokens", 0),
+        cache_write_tokens=safe_get(row, "cache_write_tokens", 0),
+        reasoning_tokens=safe_get(row, "reasoning_tokens", 0),
+        estimated_cost_usd=safe_get(row, "estimated_cost_usd", 0.0),
+        model=_parse_model(row),
+    )
+
+
 def _do_collect_sessions(db_path: str) -> SessionsState:
     """Actually read sessions from SQLite (internal, uncached)."""
     sessions: list[SessionInfo] = []
@@ -50,6 +138,8 @@ def _do_collect_sessions(db_path: str) -> SessionsState:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        columns = _table_columns(cursor, "sessions")
+        human_session_where = _human_session_where(columns)
 
         cursor.execute("""
             SELECT id, source, title, started_at, ended_at,
@@ -57,50 +147,48 @@ def _do_collect_sessions(db_path: str) -> SessionsState:
                    input_tokens, output_tokens,
                    cache_read_tokens, cache_write_tokens,
                    reasoning_tokens, estimated_cost_usd, model_config,
-                   model
+                   {model},
+                   {parent_session_id},
+                   {end_reason}
             FROM sessions
-            WHERE source != 'tool'
-              AND parent_session_id IS NULL
+            WHERE {human_session_where}
             ORDER BY started_at DESC
-        """)
+        """.format(
+            model=_optional_column(columns, "model"),
+            parent_session_id=_optional_column(columns, "parent_session_id"),
+            end_reason=_optional_column(columns, "end_reason"),
+            human_session_where=human_session_where,
+        ))
 
         for row in cursor.fetchall():
             try:
-                started_raw = safe_get(row, "started_at", 0)
-                started = datetime.fromtimestamp(started_raw)
-                ended_raw = safe_get(row, "ended_at")
-                ended = datetime.fromtimestamp(ended_raw) if ended_raw else None
+                if safe_get(row, "end_reason") == "compression":
+                    tip_id = _compression_tip(conn, safe_get(row, "id", ""))
+                    if tip_id != safe_get(row, "id", ""):
+                        tip = conn.execute(
+                            """
+                            SELECT id, source, title, started_at, ended_at,
+                                   message_count, tool_call_count,
+                                   input_tokens, output_tokens,
+                                   cache_read_tokens, cache_write_tokens,
+                                   reasoning_tokens, estimated_cost_usd,
+                                   model_config,
+                                   {model},
+                                   {parent_session_id},
+                                   {end_reason}
+                            FROM sessions
+                            WHERE id = ?
+                            """.format(
+                                model=_optional_column(columns, "model"),
+                                parent_session_id=_optional_column(columns, "parent_session_id"),
+                                end_reason=_optional_column(columns, "end_reason"),
+                            ),
+                            (tip_id,),
+                        ).fetchone()
+                        if tip:
+                            row = tip
 
-                # Prefer direct model column (hermes v0.10+); fall back to
-                # model_config JSON for older databases.
-                model = safe_get(row, "model")
-                if not model:
-                    mc_raw = safe_get(row, "model_config")
-                    if mc_raw:
-                        try:
-                            mc = json.loads(mc_raw)
-                            model = mc.get("model") or mc.get("default")
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-
-                sessions.append(
-                    SessionInfo(
-                        id=safe_get(row, "id", ""),
-                        source=safe_get(row, "source", "unknown"),
-                        title=safe_get(row, "title"),
-                        started_at=started,
-                        ended_at=ended,
-                        message_count=safe_get(row, "message_count", 0),
-                        tool_call_count=safe_get(row, "tool_call_count", 0),
-                        input_tokens=safe_get(row, "input_tokens", 0),
-                        output_tokens=safe_get(row, "output_tokens", 0),
-                        cache_read_tokens=safe_get(row, "cache_read_tokens", 0),
-                        cache_write_tokens=safe_get(row, "cache_write_tokens", 0),
-                        reasoning_tokens=safe_get(row, "reasoning_tokens", 0),
-                        estimated_cost_usd=safe_get(row, "estimated_cost_usd", 0.0),
-                        model=model,
-                    )
-                )
+                sessions.append(_session_from_row(row))
             except Exception:
                 logger.warning("Skipping unparseable session row", exc_info=True)
                 continue
@@ -113,9 +201,10 @@ def _do_collect_sessions(db_path: str) -> SessionsState:
                    SUM(tool_call_count) as tools,
                    SUM(input_tokens + output_tokens) as tokens
             FROM sessions
+            WHERE {human_session_where}
             GROUP BY day
             ORDER BY day
-        """)
+        """.format(human_session_where=human_session_where))
 
         for row in cursor.fetchall():
             try:

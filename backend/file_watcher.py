@@ -24,11 +24,12 @@ FILE_PATTERNS = {
     "state.db": ["sessions", "patterns", "timeline", "messages", "chat"],
     "MEMORY.md": ["memory"],
     "USER.md": ["user", "memory"],
-    "config.yaml": ["config", "profiles"],
+    "config.yaml": ["config", "profiles", "health"],
     "SKILL.md": ["skills"],
     "jobs.json": ["cron"],
     ".env": ["health", "profiles"],
     "SOUL.md": ["profiles"],
+    "models_dev_cache.json": ["model-info", "health"],
 }
 
 # Directory patterns
@@ -38,6 +39,8 @@ DIR_PATTERNS = {
     "projects": ["projects"],
     "memories": ["memory", "user"],
     "cron": ["cron"],
+    "logs": ["health", "gateway", "sudo"],
+    "plugins": ["plugins", "health"],
 }
 
 
@@ -154,7 +157,7 @@ class FileWatcherService:
         paths = [self.hermes_dir]
 
         # Add key subdirectories if they exist
-        for subdir in ["skills", "profiles", "memories", "cron", "projects"]:
+        for subdir in ["skills", "profiles", "memories", "cron", "projects", "logs", "plugins"]:
             path = self.hermes_dir / subdir
             if path.exists():
                 paths.append(path)

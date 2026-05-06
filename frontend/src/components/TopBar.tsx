@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTheme, THEMES } from '../hooks/useTheme'
 import { useI18n } from '../i18n'
 
@@ -20,6 +20,7 @@ export const TABS = [
   { id: 'providers', labelKey: 'tab.providers', key: null },
   { id: 'gateway', labelKey: 'tab.gateway', key: null },
   { id: 'model-info', labelKey: 'tab.model-info', key: null },
+  { id: 'plugins', labelKey: 'tab.plugins', key: null },
 ] as const
 
 export type TabId = typeof TABS[number]['id']
@@ -34,11 +35,24 @@ export default function TopBar({ activeTab, onTabChange }: TopBarProps) {
   const { t, lang, setLang } = useI18n()
   const [showThemePicker, setShowThemePicker] = useState(false)
   const [time, setTime] = useState(new Date())
+  const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement>>>({})
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  useEffect(() => {
+    const scrollActiveTab = () => {
+      tabRefs.current[activeTab]?.scrollIntoView({
+        block: 'nearest',
+        inline: 'nearest',
+      })
+    }
+    scrollActiveTab()
+    window.addEventListener('resize', scrollActiveTab)
+    return () => window.removeEventListener('resize', scrollActiveTab)
+  }, [activeTab])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -71,17 +85,27 @@ export default function TopBar({ activeTab, onTabChange }: TopBarProps) {
   }, [onTabChange])
 
   return (
-    <div className="flex items-center gap-1 px-3 py-1.5 border-b"
+    <div
+      data-testid="top-bar"
+      className="flex items-center gap-1 px-3 py-1.5 border-b w-full min-w-0 overflow-hidden"
          style={{ borderColor: 'var(--hud-border)', background: 'var(--hud-bg-surface)' }}>
       {/* Logo */}
       <span className="gradient-text font-bold text-[13px] mr-3 tracking-wider cursor-pointer shrink-0"
             onClick={() => onTabChange('dashboard')}>☤ HERMES</span>
 
       {/* Tabs */}
-      <div className="flex gap-0.5 flex-1 overflow-x-auto" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
+      <div
+        data-testid="top-tabs"
+        className="flex gap-0.5 flex-1 min-w-0 overflow-x-auto overscroll-x-contain pb-1"
+        style={{ scrollbarWidth: 'thin', WebkitOverflowScrolling: 'touch' }}
+      >
         {TABS.map(tab => (
           <button
             key={tab.id}
+            ref={(node) => {
+              if (node) tabRefs.current[tab.id] = node
+              else delete tabRefs.current[tab.id]
+            }}
             onClick={() => onTabChange(tab.id)}
             className="px-2 py-1.5 text-[13px] tracking-widest uppercase transition-all duration-150 shrink-0 cursor-pointer"
             style={{

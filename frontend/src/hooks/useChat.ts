@@ -19,6 +19,10 @@ export interface ComposerState {
   model: string
   isStreaming: boolean
   contextTokens: number
+  status: string
+  elapsedMs: number
+  firstTokenMs: number | null
+  totalMs: number | null
 }
 
 // ── localStorage helpers ───────────────────────────────────────────────────
@@ -123,6 +127,10 @@ export function useChat(sessionId: string | null) {
     model: 'unknown',
     isStreaming: false,
     contextTokens: 0,
+    status: 'idle',
+    elapsedMs: 0,
+    firstTokenMs: null,
+    totalMs: null,
   })
 
   const loadComposerState = useCallback(async () => {
@@ -136,6 +144,10 @@ export function useChat(sessionId: string | null) {
           model: state.model,
           isStreaming: state.is_streaming,
           contextTokens: state.context_tokens,
+          status: state.status ?? 'idle',
+          elapsedMs: state.elapsed_ms ?? 0,
+          firstTokenMs: state.first_token_ms ?? null,
+          totalMs: state.total_ms ?? null,
         })
       }
     } catch { /* best effort */ }
